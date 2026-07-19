@@ -111,6 +111,15 @@ The spinner glyph itself is still colored by pi's loader using `accent`, while t
 
 The selection is persisted as `spinnerVerbColor` / `spinnerStatusColor` in `~/.pi/settings.json` and applied on the next spinner tick.
 
+`spinnerVerbColor`, `spinnerStatusColor`, and `spinnerGlyphColor` also accept a `#rrggbb` hex literal instead of a theme key — a hex value bypasses theme lookup entirely and always renders that exact color, even with `themeAdaptive: false` or no theme loaded. `spinnerGlyphColor` (unset by default) overrides the glyph color that pi's loader would otherwise pick; set it to bind the glyph to the same brand color as the verb, e.g.:
+
+```json
+{
+  "spinnerVerbColor": "#d77757",
+  "spinnerGlyphColor": "#d77757"
+}
+```
+
 ### Tool background modes
 
 | Value | Behavior |

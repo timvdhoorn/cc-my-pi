@@ -17,17 +17,18 @@ const RESET = "\x1b[0m";
 // below re-derives them from the active pi theme each tick.
 let CLAUDE_ORANGE = "\x1b[38;2;215;119;87m";
 let STATUS_DIM = "\x1b[38;2;153;153;153m";
+let GLYPH_COLOR: string | null = null;
 
 // Short TTL so /cc-spinner changes are picked up within ~1s without
 // re-reading the file on every spinner tick (~170ms).
-let _spinnerSettingsCache: { value: { adaptive: boolean; verbColor: string; statusColor: string }; expires: number } | null = null;
+let _spinnerSettingsCache: { value: { adaptive: boolean; verbColor: string; statusColor: string; glyphColor: string }; expires: number } | null = null;
 const SPINNER_SETTINGS_TTL_MS = 1_000;
 // Cross-extension bust signal: /cc-spinner in index.ts bumps this counter
 // and we drop the cache when it changes.
 const SPINNER_BUST_KEY = Symbol.for("pi-claude-style-tools:spinner-settings-bust");
 let _spinnerLastBust = 0;
 
-function readSpinnerSettings(): { adaptive: boolean; verbColor: string; statusColor: string } {
+function readSpinnerSettings(): { adaptive: boolean; verbColor: string; statusColor: string; glyphColor: string } {
 	const now = Date.now();
 	const bust = ((globalThis as any)[SPINNER_BUST_KEY] as number | undefined) ?? 0;
 	if (bust !== _spinnerLastBust) {
@@ -43,6 +44,7 @@ function readSpinnerSettings(): { adaptive: boolean; verbColor: string; statusCo
 	// orange as the glyph on themes like openAntigravity-dark.
 	let verbColor = "borderAccent";
 	let statusColor = "muted";
+	let glyphColor = "";
 	const paths = [`${process.cwd()}/.pi/settings.json`, `${process.env.HOME ?? ""}/.pi/settings.json`];
 	for (const p of paths) {
 		try {
@@ -52,10 +54,11 @@ function readSpinnerSettings(): { adaptive: boolean; verbColor: string; statusCo
 				if (raw.themeAdaptive === false) adaptive = false;
 				if (typeof raw.spinnerVerbColor === "string" && raw.spinnerVerbColor.length > 0) verbColor = raw.spinnerVerbColor;
 				if (typeof raw.spinnerStatusColor === "string" && raw.spinnerStatusColor.length > 0) statusColor = raw.spinnerStatusColor;
+				if (typeof raw.spinnerGlyphColor === "string" && raw.spinnerGlyphColor.length > 0) glyphColor = raw.spinnerGlyphColor;
 			}
 		} catch { /* ignore */ }
 	}
-	const value = { adaptive, verbColor, statusColor };
+	const value = { adaptive, verbColor, statusColor, glyphColor };
 	_spinnerSettingsCache = { value, expires: now + SPINNER_SETTINGS_TTL_MS };
 	return value;
 }
@@ -72,6 +75,15 @@ let _themeColorsCacheTheme: unknown = null;
 let _themeColorsLastAdaptive: boolean | null = null;
 let _themeColorsLastVerbKey: string | null = null;
 let _themeColorsLastStatusKey: string | null = null;
+let _themeColorsLastGlyphKey: string | null = null;
+
+/** Parse a `#rrggbb` literal into a 24-bit ANSI foreground escape, or null if not a valid hex color. */
+export function hexToAnsiFg(value: string): string | null {
+	const match = /^#([0-9a-fA-F]{6})$/.exec(value.trim());
+	if (!match) return null;
+	const n = parseInt(match[1], 16);
+	return `\x1b[38;2;${(n >> 16) & 0xff};${(n >> 8) & 0xff};${n & 0xff}m`;
+}
 
 function resolveThemeColor(theme: any, key: string, fallbackKey: string): string | null {
 	if (!theme || typeof theme.getFgAnsi !== "function") return null;
@@ -89,17 +101,19 @@ function resolveThemeColor(theme: any, key: string, fallbackKey: string): string
 }
 
 function applyThemeColors(theme: any): void {
-	const { adaptive, verbColor, statusColor } = readSpinnerSettings();
+	const { adaptive, verbColor, statusColor, glyphColor } = readSpinnerSettings();
 
 	// Respond to runtime toggles (themeAdaptive or spinner color key changes)
 	// without restarting pi.
 	const settingsChanged = _themeColorsLastAdaptive !== adaptive
 		|| _themeColorsLastVerbKey !== verbColor
-		|| _themeColorsLastStatusKey !== statusColor;
+		|| _themeColorsLastStatusKey !== statusColor
+		|| _themeColorsLastGlyphKey !== glyphColor;
 	if (settingsChanged) {
 		_themeColorsLastAdaptive = adaptive;
 		_themeColorsLastVerbKey = verbColor;
 		_themeColorsLastStatusKey = statusColor;
+		_themeColorsLastGlyphKey = glyphColor;
 		_themeColorsCacheTheme = null;
 		if (!adaptive) {
 			CLAUDE_ORANGE = _DEFAULT_CLAUDE_ORANGE;
@@ -107,14 +121,38 @@ function applyThemeColors(theme: any): void {
 		}
 	}
 
+	// Hex literals bypass theme lookup entirely and apply unconditionally,
+	// even when adaptive is off or no theme is available. An empty setting
+	// disables the glyph override; a theme-key setting is resolved below
+	// (only on cache miss, so it isn't clobbered back to null every tick).
+	if (!glyphColor) {
+		GLYPH_COLOR = null;
+	} else {
+		const hex = hexToAnsiFg(glyphColor);
+		if (hex) GLYPH_COLOR = hex;
+	}
+
+	const verbHex = verbColor ? hexToAnsiFg(verbColor) : null;
+	if (verbHex) CLAUDE_ORANGE = verbHex;
+	const statusHex = statusColor ? hexToAnsiFg(statusColor) : null;
+	if (statusHex) STATUS_DIM = statusHex;
+
 	if (!theme || !adaptive) return;
 	if (_themeColorsCacheTheme === theme) return;
 	_themeColorsCacheTheme = theme;
 
-	const verb = resolveThemeColor(theme, verbColor, "accent");
-	if (verb) CLAUDE_ORANGE = verb;
-	const status = resolveThemeColor(theme, statusColor, "muted");
-	if (status) STATUS_DIM = status;
+	if (!verbHex) {
+		const verb = resolveThemeColor(theme, verbColor, "accent");
+		if (verb) CLAUDE_ORANGE = verb;
+	}
+	if (!statusHex) {
+		const status = resolveThemeColor(theme, statusColor, "muted");
+		if (status) STATUS_DIM = status;
+	}
+	if (glyphColor && !hexToAnsiFg(glyphColor)) {
+		const glyph = resolveThemeColor(theme, glyphColor, glyphColor);
+		if (glyph) GLYPH_COLOR = glyph;
+	}
 }
 
 // Match OpenBrawd's spinner glyph set, with the final Ghostty frame restored
@@ -158,7 +196,8 @@ function stopLoaderIfUiStopped(loader: any): boolean {
 	const message = typeof this.message === "string" && RAW_ANSI_RE.test(this.message)
 		? this.message
 		: this.messageColorFn(this.message);
-	const nextText = `${this.spinnerColorFn(frame)} ${message}`;
+	const coloredFrame = GLYPH_COLOR ? `${GLYPH_COLOR}${frame}${RESET}` : this.spinnerColorFn(frame);
+	const nextText = `${coloredFrame} ${message}`;
 	if ((this as any)[LOADER_LAST_TEXT] === nextText) return;
 	(this as any)[LOADER_LAST_TEXT] = nextText;
 	this.setText(nextText);
