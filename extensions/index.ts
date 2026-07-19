@@ -58,6 +58,7 @@ import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
 	renderClaudeUserMessageLine,
+	stripAttachedImagePathsBlock,
 	trimUserMessagePadding,
 	userMessageCopyPayload,
 } from "./user-message-render.js";
@@ -2168,8 +2169,11 @@ function patchUserMessageRender(): void {
 		const contentWidth = Math.max(1, messageWidth - 2);
 		const originalLines = originalRender.call(this, contentWidth);
 		if (!Array.isArray(originalLines) || originalLines.length === 0) return originalLines;
-		const lines = trimUserMessagePadding(
-			originalLines,
+		const lines = stripAttachedImagePathsBlock(
+			trimUserMessagePadding(
+				originalLines,
+				(line) => stripAnsi(cleanUserMessageLine(line)),
+			),
 			(line) => stripAnsi(cleanUserMessageLine(line)),
 		);
 		if (lines.length === 0) return originalLines;

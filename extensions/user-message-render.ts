@@ -77,6 +77,40 @@ export function trimUserMessagePadding(
   return lines.slice(start, end);
 }
 
+/**
+ * Display-only removal of pi-paster's appended attachment block:
+ *
+ *   Attached image paths:
+ *   - [#image 1]: /path/to/img.png
+ *
+ * The block stays in the actual message content (the model needs the paths);
+ * pi-paster already renders its own "Attached [#image 1] <path>" preview under
+ * the message, so showing the block inside the box duplicates it. Only strips
+ * when the block is the tail of the message and every line after the header is
+ * an attachment bullet.
+ */
+export function stripAttachedImagePathsBlock(
+	lines: string[],
+	stripAnsi: (line: string) => string,
+): string[] {
+	const plain = lines.map((line) => stripAnsi(line).trim());
+	let header = -1;
+	for (let i = plain.length - 1; i >= 0; i--) {
+		if (plain[i] === "Attached image paths:") {
+			header = i;
+			break;
+		}
+	}
+	if (header === -1) return lines;
+	for (let i = header + 1; i < plain.length; i++) {
+		if (plain[i] === "") continue;
+		if (!/^-\s*\[#image \d+\]:\s/.test(plain[i]!)) return lines;
+	}
+	let end = header;
+	while (end > 0 && plain[end - 1] === "") end -= 1;
+	return lines.slice(0, end);
+}
+
 export function userMessageCopyPayload(plain: string): string {
   return plain.replace(/^❯\s*/, "");
 }

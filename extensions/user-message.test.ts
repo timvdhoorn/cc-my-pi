@@ -5,6 +5,7 @@ import {
   prefixEditorPromptLine,
   renderClaudeUserMessageLine,
   restoreUserMessageBackground,
+  stripAttachedImagePathsBlock,
   trimUserMessagePadding,
   userMessageCopyPayload,
 } from "./user-message-render.ts";
@@ -104,4 +105,30 @@ test("adds a Claude chevron to the live editor row", () => {
     (value) => value,
   );
   assert.match(stripAnsi(line), /^❯ text/);
+});
+
+test("strips a trailing attached-image-paths block from display", () => {
+  const lines = [
+    "dit is een test [#image 1] kun je testen",
+    "",
+    "Attached image paths:",
+    "- [#image 1]: /Users/tim/Library/Screenshot 2026-07-19 at 22.05.40@2x.png",
+  ];
+  assert.deepEqual(stripAttachedImagePathsBlock(lines, stripAnsi), [
+    "dit is een test [#image 1] kun je testen",
+  ]);
+});
+
+test("keeps an attached-image-paths block followed by other content", () => {
+  const lines = [
+    "Attached image paths:",
+    "- [#image 1]: /tmp/a.png",
+    "meer tekst erna",
+  ];
+  assert.deepEqual(stripAttachedImagePathsBlock(lines, stripAnsi), lines);
+});
+
+test("leaves messages without an attachment block untouched", () => {
+  const lines = ["gewoon een bericht", "tweede regel"];
+  assert.deepEqual(stripAttachedImagePathsBlock(lines, stripAnsi), lines);
 });
