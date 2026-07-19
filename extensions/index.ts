@@ -519,7 +519,7 @@ function getToolStatusForGroup(tool: any): ToolStatus {
 	return "success";
 }
 
-let TOOL_STATUS_SUCCESS = "\x1b[32m";
+let TOOL_STATUS_SUCCESS = "\x1b[38;2;0;189;90m"; // #00BD5A
 let TOOL_STATUS_ERROR = "\x1b[31m";
 let TOOL_STATUS_PENDING = "\x1b[90m";
 
@@ -585,6 +585,7 @@ function paintStatusDot(colorAnsi: string): string {
 
 function themeStatusDot(theme: Theme, colorKey: "success" | "error" | "dim" | "muted"): string {
 	// theme.fg may not preserve nested SGR cleanly — color the glyph string itself.
+	if (colorKey === "success") return paintStatusDot(TOOL_STATUS_SUCCESS);
 	return theme.fg(colorKey, `${STATUS_DOT_BOLD}${STATUS_DOT_FILLED}`);
 }
 
@@ -601,11 +602,8 @@ function paintAgentBreatheDot(colorAnsi: string = TOOL_STATUS_SUCCESS): string {
 	return `${colorAnsi}${bold}${glyph}${TRANSPARENT_RESET}`;
 }
 
-function agentBreatheDot(theme: Theme): string {
-	const glyph = agentBreatheGlyphRaw();
-	if (glyph === " ") return " ";
-	const bold = glyph === "●" ? STATUS_DOT_BOLD : "";
-	return theme.fg("success", `${bold}${glyph}`);
+function agentBreatheDot(_theme: Theme): string {
+	return paintAgentBreatheDot(TOOL_STATUS_SUCCESS);
 }
 
 function groupStatusLight(status: ToolStatus, options?: { agentBreathe?: boolean }): string {
@@ -3783,7 +3781,7 @@ const _claudeStyleDefaults = {
 	FG_SAFE_MUTED: "\x1b[38;2;139;148;158m",
 	FG_ADD: "\x1b[38;2;100;180;120m",
 	FG_DEL: "\x1b[38;2;200;100;100m",
-	TOOL_STATUS_SUCCESS: "\x1b[32m",
+	TOOL_STATUS_SUCCESS: "\x1b[38;2;0;189;90m", // #00BD5A
 	TOOL_STATUS_ERROR: "\x1b[31m",
 	TOOL_STATUS_PENDING: "\x1b[90m",
 };

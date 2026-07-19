@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **Success tool status dots render `#00BD5A`** — grouped and ungrouped success dots (including the Agent-family breathe glyph) now share the same fixed brand green in fixed-palette mode instead of two different greens; theme-adaptive mode is unaffected and still follows the active theme's success color.
 - **Collapsed grouped tool rows now show their result summary** — with tool grouping on, each collapsed child line keeps its muted result summary as a same-line suffix (e.g. `● Ctx Execute · 5 lines returned`) instead of dropping it entirely; the `ctrl+o to toggle` hint is not repeated per child since the group header already shows one.
 - **Tool rows use Claude Code's glyphs** — the tool status bullet is now `⏺` (U+23FA) on macOS, falling back to `●` on other platforms where the glyph is poorly supported. The connector under a single tool (or the last tool in a grouped block) is now the `⎿` result arm (U+23BF); mid-tree `├`/`│` connectors are unchanged. Agent-family breathe glyphs keep their `● • ·` optical-size family. Both new glyphs are single display cells, so column alignment is unaffected.
 - **Tree connectors lighter by default** — `DEFAULT_TOOL_BRANCH_GRAY` raised from 72 to 128, closer to Claude Code's dim gray for the `├ │ └` connector column.
