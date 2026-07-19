@@ -16,12 +16,14 @@
 
 - **Collapsed grouped tool rows now show their result summary** — with tool grouping on, each collapsed child line keeps its muted result summary as a same-line suffix (e.g. `● Ctx Execute · 5 lines returned`) instead of dropping it entirely; the `ctrl+o to toggle` hint is not repeated per child since the group header already shows one.
 - **Tool rows use Claude Code's glyphs** — the tool status bullet is now `⏺` (U+23FA) on macOS, falling back to `●` on other platforms where the glyph is poorly supported. The connector under a single tool (or the last tool in a grouped block) is now the `⎿` result arm (U+23BF); mid-tree `├`/`│` connectors are unchanged. Agent-family breathe glyphs keep their `● • ·` optical-size family. Both new glyphs are single display cells, so column alignment is unaffected.
+- **Tree connectors lighter by default** — `DEFAULT_TOOL_BRANCH_GRAY` raised from 72 to 128, closer to Claude Code's dim gray for the `├ │ └` connector column.
 
 ### Fixed
 
 - **User prompts now match Claude Code's compact row style** — submitted messages use a full-width `userMessageBg` row with muted `❯`, no border or vertical padding, and clean multiline continuation alignment; the live input editor now uses the same `❯` prompt glyph.
 - **Assistant list-bullet setting now preserves Pi defaults correctly** — `default` delegates unchanged to Pi's theme; only `dash` replaces the final glyph while preserving theme color and spacing.
 - **Custom tool titles no longer render twice** — generic call summaries no longer fall back to `humanizeToolName(name)`, which produced headers like `Ask User Question Ask User Question` and `Advisor Advisor` for tools without a path/query/prompt arg. `ask_user_question` / `questionnaire` now summarize as `N question(s)`; `advisor` shows its configured reviewer model and thinking effort; `AskClaude` uses the prompt. `toolHeader` also drops a summary that only repeats the title.
+- **Collapsed group summaries no longer leak the result line's own branch glyph** — extraction now strips the `└`/`⎿` arm and invisible wrap marker from the source result line before use, so summaries read `· 83 lines returned` instead of `└ 83 lines returned`.
 
 ## 1.0.74 — 2026-07-18
 

@@ -757,7 +757,12 @@ function getCompactToolSummary(tool: any, width: number, groupedLabel?: string):
 	// body[0] is the call/title line; the summary is the next line.
 	const raw = body[1];
 	if (!raw) return "";
-	let plain = stripAnsi(removeGroupedToolPrefix(raw, groupedLabel)).trim();
+	// Result lines carry their own └/⎿ arm (branchLead), which stripLeadingToolStatus
+	// only removes when a status dot follows — result lines have none.
+	let plain = stripAnsi(removeGroupedToolPrefix(raw, groupedLabel))
+		.replaceAll(WRAP_MARK, "")
+		.replace(/^[├└⎿│─\s]+/, "")
+		.trim();
 	if (!plain) return "";
 	const hintPlain = stripAnsi(toolOutputDetailHint(undefined as any, false, true)).trim();
 	if (hintPlain && plain.endsWith(hintPlain)) {
@@ -3481,8 +3486,8 @@ let FG_DEL = "\x1b[38;2;200;100;100m";
 let FG_DIM = "\x1b[38;2;80;80;80m";
 let FG_LNUM = "\x1b[38;2;100;100;100m";
 let FG_RULE = "\x1b[38;2;50;50;50m";
-// Tool branch connectors (├ └ │). Default fixed gray 72 — independent of pi theme.
-const DEFAULT_TOOL_BRANCH_GRAY = 72;
+// Tool branch connectors (├ └ │). Default fixed gray 128 — independent of pi theme.
+const DEFAULT_TOOL_BRANCH_GRAY = 128;
 
 function toolBranchRgbAnsi(gray: number): string {
 	const g = Math.max(0, Math.min(255, Math.round(gray)));
