@@ -4171,17 +4171,10 @@ function stripes(width: number): string {
 	return BG_BASE + FG_STRIPE + "╱".repeat(width) + D_RST;
 }
 
+// Claude Code shows no stat bar next to diff summaries; kept as a stub so
+// callers don't need to change if this is ever restored.
 function renderDiffStatBar(added: number, removed: number, width = termW()): string {
-	const total = added + removed;
-	if (total === 0 || width < 20) return "";
-	const slots = Math.max(8, Math.min(20, Math.floor(width / 14)));
-	let addSlots = Math.max(0, Math.min(slots, Math.round((added / total) * slots)));
-	if (added > 0 && addSlots === 0) addSlots = 1;
-	if (removed > 0 && addSlots >= slots) addSlots = slots - 1;
-	const removeSlots = Math.max(0, slots - addSlots);
-	const addBar = addSlots > 0 ? `${FG_ADD}${"━".repeat(addSlots)}${D_RST}` : "";
-	const removeBar = removeSlots > 0 ? `${FG_DEL}${"━".repeat(removeSlots)}${D_RST}` : "";
-	return `${FG_DIM}[${D_RST}${addBar}${removeBar}${FG_DIM}]${D_RST}`;
+	return "";
 }
 
 function summarizeDiff(added: number, removed: number): string {
@@ -4195,10 +4188,24 @@ function summarizeDiff(added: number, removed: number): string {
 
 function diffSummaryWithMeta(added: number, removed: number, hunks: number, mode: string): string {
 	const base = summarizeDiff(added, removed);
-	const extras: string[] = [];
-	if (hunks > 0) extras.push(`${FG_DIM}${hunks} hunk${hunks === 1 ? "" : "s"}${D_RST}`);
-	if (mode) extras.push(`${FG_DIM}${mode}${D_RST}`);
-	return extras.length ? `${base} ${FG_DIM}•${D_RST} ${extras.join(` ${FG_DIM}•${D_RST} `)}` : base;
+	const meaningfulMode = mode === "new file" || mode === "delete" ? mode : "";
+	return meaningfulMode ? `${base} ${FG_DIM}•${D_RST} ${FG_DIM}${meaningfulMode}${D_RST}` : base;
+}
+
+/** Claude Code-style new-file preview: dim line numbers, plain text — no
+ *  add-gutter or green background (colored diffs are for edits only). */
+function renderNewFileLines(content: string, max: number, width: number): string {
+	const all = content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+	const shown = all.slice(0, max);
+	const nw = Math.max(2, String(all.length).length);
+	const rows = shown.map((line, i) => {
+		const num = String(i + 1).padStart(nw);
+		return clampLineWidth(`${FG_LNUM}${num}${D_RST}  ${line}`, width);
+	});
+	if (all.length > shown.length) {
+		rows.push(`${FG_DIM}  ${collapsedDiffHint(all.length - shown.length, 0)}${D_RST}`);
+	}
+	return rows.join("\n");
 }
 
 function collapsedDiffHint(remainingLines: number, hiddenHunks: number): string {
@@ -7064,26 +7071,13 @@ export default function (pi: ExtensionAPI) {
 				const content = typeof ctx.args?.content === "string" ? ctx.args.content : "";
 				const lineTotal = typeof d.lines === "number" ? d.lines : lineCount(content);
 				const contentHash = hashText(content);
-				const syntheticDiff = getCachedParsedDiff(ctx, `nf-diff:${d.filePath}:${contentHash}`, "", content);
-				const richSummary = diffSummaryWithMeta(syntheticDiff.added, 0, 1, "new file");
+				const richSummary = diffSummaryWithMeta(lineTotal, 0, 0, "new file");
 				const previewLines = ctx.expanded ? MAX_RENDER_LINES : diffCollapsedLimit();
 				const diffWidth = branchDiffWidth();
 				const pk = `nf:${d.filePath}:${contentHash}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit()}`;
 				if (ctx.state._nfk !== pk) {
 					ctx.state._nfk = pk;
-					ctx.state._nft = withFinalBranchBlock(`${richSummary}\n${theme.fg("muted", "rendering diff…")}`, theme);
-					const dc = resolveDiffColors(theme);
-					renderUnified(syntheticDiff, lang(d.filePath), previewLines, dc, diffWidth)
-						.then((rendered) => {
-							if (ctx.state._nfk !== pk) return;
-							ctx.state._nft = withFinalBranchBlock(`${richSummary}\n${rendered}`, theme);
-							safeInvalidate(ctx);
-						})
-						.catch(() => {
-							if (ctx.state._nfk !== pk) return;
-							ctx.state._nft = withBranch(`${richSummary} ${theme.fg("muted", `(${lineTotal} lines)`)}`, theme);
-							safeInvalidate(ctx);
-						});
+					ctx.state._nft = withFinalBranchBlock(`${richSummary}\n${renderNewFileLines(content, previewLines, diffWidth)}`, theme);
 				}
 				return makeText(ctx.lastComponent, ctx.state._nft ?? withBranch(`${richSummary} ${theme.fg("muted", `(${lineTotal} lines)`)}`, theme));
 			}
