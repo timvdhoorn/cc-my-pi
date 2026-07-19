@@ -31,19 +31,23 @@
     "extensions/index.ts",
     "extensions/spinner.ts",
     "extensions/cc-tools-settings-ui.ts",
+    "extensions/image-paster.ts",
+    "extensions/user-message-render.ts",
     "config/config.example.json",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-tools-settings-ui.ts",
+    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts",
     "pack:dry-run": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
     "bench:tools": "bun scripts/benchmark-tools.ts"
   },
   "dependencies": {
     "@shikijs/cli": "^4.0.2",
-    "diff": "^9.0.0"
+    "diff": "^9.0.0",
+    "pi-paster": "^0.2.3"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

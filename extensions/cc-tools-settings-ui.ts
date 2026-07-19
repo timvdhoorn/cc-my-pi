@@ -21,6 +21,7 @@ export interface CcToolsUiSnapshot {
 	themeAdaptive: boolean;
 	liveToolPreview: boolean;
 	assistantListBulletStyle: BulletStyle;
+	imagePasterEnabled: boolean;
 	branchPreset: BranchPreset;
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
@@ -90,6 +91,16 @@ const SETTING_ORDER: Array<{
 			s.assistantListBulletStyle === "dash"
 				? 'Assistant lists force plain "-"'
 				: "Assistant lists use Pi theme default",
+	},
+	{
+		id: "imagePasterEnabled",
+		label: "Image paster",
+		values: ["on", "off"],
+		current: (s) => (s.imagePasterEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.imagePasterEnabled
+				? "Clipboard images and pasted image paths become attachments"
+				: "Image attachment paste support disabled (reload required)",
 	},
 	{
 		id: "themeAdaptive",

@@ -29,6 +29,7 @@ Claude Code inspired tool rendering for Pi — Shiki-powered diffs, status dots,
 - **Live running previews** that show a few output lines for active tool calls (latest lines for bash), persisting until the next tool/text activity
 - **Subagent completion notifications** restyled to match the same Claude-style tool rows
 - **RTK rewrite integration** that folds rewrite notices into the bash tool row with a muted `(RTK)` badge and expanded-only rewrite details
+- **Built-in image paster** — clipboard images and pasted image paths become first-class attachments through bundled `pi-paster` (toggle with `imagePasterEnabled`)
 - **Transparent tool backgrounds** in `transparent` or `border` mode
 - **Theme-adaptive palette** — borders, branch connectors, dim text, spinner accent, and diff backgrounds automatically follow the active pi theme (set `themeAdaptive: false` to keep the fixed Claude-style palette)
 - **Light Ghostty-sync themes** — edit/write diffs use `github-light` highlighting and light-tinted diff rows; tool pending dots use softer chrome colors
@@ -59,7 +60,8 @@ Set in `.pi/settings.json` or `~/.pi/settings.json`:
   "diffCollapsedLines": 24,
   "themeAdaptive": true,
   "diffTheme": "github-dark",
-  "assistantListBulletStyle": "default"
+  "assistantListBulletStyle": "default",
+  "imagePasterEnabled": true
 }
 ```
 
@@ -132,7 +134,7 @@ Use `/cc-tools` to control tool UI at runtime:
 /cc-tools bullets toggle  # flip default ↔ dash
 ```
 
-The settings panel lists style, grouping, extra detail, branch color, list bullets, theme-adaptive, live preview, and read/bash output modes. Each change applies immediately; the preview block under the list shows a mock tool tree for the current combination.
+The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, theme-adaptive, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
 
 `assistantListBulletStyle` only affects **assistant Markdown unordered lists** (the rows that this package restyles). Thinking blocks and user messages are unchanged.
 
@@ -159,6 +161,7 @@ The settings panel lists style, grouping, extra detail, branch color, list bulle
 | `liveToolPreviewLines` | `5` | Lines shown in the collapsed live preview |
 | `diffCollapsedLines` | `24` | Diff lines before collapsing |
 | `assistantListBulletStyle` | `default` | Assistant unordered list markers: Pi theme `default` or forced `dash` (`-`) |
+| `imagePasterEnabled` | `true` | Bundle clipboard-image and pasted-image-path attachments; reload after changing |
 
 ## Notes
 

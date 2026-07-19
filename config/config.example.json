@@ -17,5 +17,6 @@
   "themeAdaptive": true,
   "diffTheme": "github-dark",
   "diffColors": {},
-  "assistantListBulletStyle": "default"
+  "assistantListBulletStyle": "default",
+  "imagePasterEnabled": true
 }

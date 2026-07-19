@@ -13,6 +13,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
+	CustomEditor,
 	CustomMessageComponent,
 	ToolExecutionComponent,
 	UserMessageComponent,
@@ -50,6 +51,14 @@ import {
 	type OutputMode,
 	type ToolStyle,
 } from "./cc-tools-settings-ui.js";
+import { registerBundledImagePaster } from "./image-paster.js";
+import {
+	patchEditorPromptRender,
+	prefixEditorPromptLine,
+	renderClaudeUserMessageLine,
+	trimUserMessagePadding,
+	userMessageCopyPayload,
+} from "./user-message-render.js";
 
 import * as Diff from "diff";
 import type { BundledLanguage, BundledTheme } from "shiki";
@@ -75,6 +84,7 @@ const TOOL_CACHE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool-cac
 const TOOL_IMAGE_EXPAND_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-read-image-expansion");
 const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-custom-message-render");
 const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-user-message-render");
+const PROMPT_EDITOR_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-prompt-editor-render");
 const UI_NOTIFY_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-ui-notifications-v2");
 const WRAP_MARK = "\uE000";
 const KITTY_IMAGE_PREFIX = "\x1b_G";
@@ -132,6 +142,8 @@ interface SettingsFile {
 	 * Legacy `fisheye` values are treated as `default`.
 	 */
 	assistantListBulletStyle?: "default" | "dash" | "fisheye";
+	/** Bundle pi-paster image attachments and clipboard paste support. Defaults to true. */
+	imagePasterEnabled?: boolean;
 }
 
 let _settingsCache: { value: SettingsFile; timestamp: number } | null = null;
@@ -225,7 +237,6 @@ function applyToolBackgroundMode(theme: unknown): void {
 	const globalTheme = getGlobalPiTheme();
 	if (globalTheme) targets.add(globalTheme);
 	for (const t of targets) {
-		setThemeBg(t, "userMessageBg", TRANSPARENT_BG);
 		if (toolBackgroundMode === "default") continue;
 		setThemeBg(t, "toolPendingBg", TRANSPARENT_BG);
 		setThemeBg(t, "toolSuccessBg", TRANSPARENT_BG);
@@ -340,7 +351,7 @@ function copyPayloadForLine(line: string): string | undefined {
 	if (isBorderedContentLine(line)) return extractBorderedInnerForCopy(line);
 	const plain = stripAnsi(line).trim();
 	if (!plain) return undefined;
-	return plain;
+	return userMessageCopyPayload(plain);
 }
 
 function roundedCodeBlockTop(width: number, language: string): string {
@@ -1498,6 +1509,10 @@ function assistantListBulletStyle(): AssistantListBulletStyle {
 	return readSettings().assistantListBulletStyle === "dash" ? "dash" : "default";
 }
 
+function imagePasterEnabled(): boolean {
+	return readSettings().imagePasterEnabled !== false;
+}
+
 function refreshAssistantListBulletStyle(ctx: any): void {
 	_settingsCache = null;
 	bumpToolBranchVisualEpoch();
@@ -2071,17 +2086,13 @@ function stripBackgroundAnsi(text: string): string {
 	});
 }
 
-function roundedUserBorder(width: number, top: boolean): string {
-	if (width <= 1) return `${BORDER_COLOR}│${TRANSPARENT_RESET}`;
-	const left = top ? "╭" : "╰";
-	const right = top ? "╮" : "╯";
-	if (!top || width < 10) {
-		return `${BORDER_COLOR}${left}${"─".repeat(Math.max(0, width - 2))}${right}${TRANSPARENT_RESET}`;
-	}
-	const label = `${WORKED_LINE_FG} User ${TRANSPARENT_RESET}`;
-	const prefix = "─";
-	const suffixWidth = Math.max(0, width - 2 - visibleWidth(prefix) - visibleWidth(label));
-	return `${BORDER_COLOR}${left}${prefix}${TRANSPARENT_RESET}${label}${BORDER_COLOR}${"─".repeat(suffixWidth)}${right}${TRANSPARENT_RESET}`;
+const CLAUDE_USER_MESSAGE_BG = "\x1b[48;2;55;55;55m";
+
+function userMessageBackground(): string {
+	const resolved = safeBgAnsi(getGlobalPiTheme(), "userMessageBg");
+	return resolved && resolved !== TRANSPARENT_BG
+		? resolved
+		: CLAUDE_USER_MESSAGE_BG;
 }
 
 function trimAnsiRight(text: string): string {
@@ -2094,14 +2105,22 @@ function trimAnsiRight(text: string): string {
 }
 
 function cleanUserMessageLine(line: string): string {
-	return `${TRANSPARENT_BG}${trimAnsiRight(stripBackgroundAnsi(stripOsc133Zones(line)))}${TRANSPARENT_BG}`;
+	return trimAnsiLeft(trimAnsiRight(stripBackgroundAnsi(stripOsc133Zones(line))));
 }
 
-function borderedUserMessageLine(line: string, width: number): string {
-	const innerWidth = Math.max(1, width - 4);
-	const content = clampLineWidth(cleanUserMessageLine(line), innerWidth);
-	const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(content)));
-	return `${BORDER_COLOR}│${TRANSPARENT_RESET} ${content}${padding} ${BORDER_COLOR}│${TRANSPARENT_RESET}`;
+function claudeUserMessageLine(line: string, width: number, first: boolean): string {
+	return renderClaudeUserMessageLine({
+		line,
+		width,
+		first,
+		background: userMessageBackground(),
+		chromeColor: BORDER_COLOR,
+		reset: RESET,
+		transparentReset: TRANSPARENT_RESET,
+		clean: cleanUserMessageLine,
+		clamp: clampLineWidth,
+		visibleWidth,
+	});
 }
 
 function visitMarkdownDescendants(root: unknown, visit: (md: InstanceType<typeof Markdown>) => void): void {
@@ -2129,19 +2148,38 @@ function patchUserMessageRender(): void {
 				child.invalidate?.();
 			}
 		});
-		const borderWidth = Math.max(1, width);
-		const contentWidth = Math.max(1, borderWidth - 4);
-		const lines = originalRender.call(this, contentWidth);
-		if (!Array.isArray(lines) || lines.length === 0) return lines;
-		const rendered = [
-			roundedUserBorder(borderWidth, true),
-			...lines.map((line: string) => borderedUserMessageLine(line, borderWidth)),
-			roundedUserBorder(borderWidth, false),
-		];
-		const clamped = rendered.map((line) => clampLineWidth(line, borderWidth));
+		const messageWidth = Math.max(1, width);
+		const contentWidth = Math.max(1, messageWidth - 2);
+		const originalLines = originalRender.call(this, contentWidth);
+		if (!Array.isArray(originalLines) || originalLines.length === 0) return originalLines;
+		const lines = trimUserMessagePadding(
+			originalLines,
+			(line) => stripAnsi(cleanUserMessageLine(line)),
+		);
+		if (lines.length === 0) return originalLines;
+		const rendered = lines.map((line: string, index: number) =>
+			claudeUserMessageLine(line, messageWidth, index === 0),
+		);
+		const clamped = rendered.map((line) => clampLineWidth(line, messageWidth));
 		return storeMessageRenderCache(this, width, applyTerminalCopyZones(clamped));
 	};
 	proto[USER_MESSAGE_PATCH_FLAG] = true;
+}
+
+function patchPromptEditorRender(): void {
+	patchEditorPromptRender(
+		CustomEditor,
+		PROMPT_EDITOR_PATCH_FLAG,
+		(line, paddingX, width) =>
+			prefixEditorPromptLine(
+				line,
+				paddingX,
+				width,
+				BORDER_COLOR,
+				RESET,
+				truncateToWidth,
+			),
+	);
 }
 
 function patchAssistantMessages(): void {
@@ -5984,6 +6022,7 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 // ===========================================================================
 
 export default function (pi: ExtensionAPI) {
+	registerBundledImagePaster(pi, imagePasterEnabled());
 	patchToolExecutionBackgroundSync();
 	patchToolRenderCacheInvalidation();
 	patchReadImageExpansion();
@@ -5991,6 +6030,7 @@ export default function (pi: ExtensionAPI) {
 	patchGlobalToolBorders();
 	patchCustomMessageRender();
 	patchUserMessageRender();
+	patchPromptEditorRender();
 	patchAssistantMessages();
 	patchToolExecutionRenderers();
 	applyDiffPalette();
@@ -6035,6 +6075,7 @@ export default function (pi: ExtensionAPI) {
 			themeAdaptive: themeAdaptiveEnabled(),
 			liveToolPreview: settings.liveToolPreview !== false,
 			assistantListBulletStyle: assistantListBulletStyle() as BulletStyle,
+			imagePasterEnabled: imagePasterEnabled(),
 			branchPreset: getBranchPreset(),
 			readOutputMode,
 			bashOutputMode,
@@ -6078,6 +6119,11 @@ export default function (pi: ExtensionAPI) {
 				if (value !== "default" && value !== "dash") return;
 				writeSettingsKey("assistantListBulletStyle", value);
 				refreshAssistantListBulletStyle(ctx);
+				break;
+			}
+			case "imagePasterEnabled": {
+				writeSettingsKey("imagePasterEnabled", value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply image paster changes", "info");
 				break;
 			}
 			case "themeAdaptive": {

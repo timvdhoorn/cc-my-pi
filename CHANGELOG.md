@@ -7,11 +7,13 @@
 
 ### Added
 
+- **Built-in optional image paster** — `pi-paster` is now a runtime dependency, enabled by default through `imagePasterEnabled`. `/cc-tools` exposes an Image paster toggle; reload applies changes. The Claude prompt glyph decorates the shared `CustomEditor` prototype instead of replacing `PasterEditor`, preserving clipboard image and image-path attachments.
 - **Interactive `/cc-tools` settings panel** — bare `/cc-tools` (or `/cc-tools ui`) opens an overlay with all major display options. Cycling a value applies it live and refreshes an ASCII preview of tool chrome, grouping, bullets, and output modes. Existing subcommands (`outlines`, `group`, `bullets`, `branch`, `status`, …) still work.
 - **Configurable assistant list bullets** — setting `assistantListBulletStyle` (`default` delegates to Pi's theme, `dash` forces `-`) and runtime `/cc-tools bullets default|dash|toggle|status`. Legacy `fisheye` config maps to `default`. Only assistant Markdown unordered lists are affected; thinking blocks stay unchanged.
 
 ### Fixed
 
+- **User prompts now match Claude Code's compact row style** — submitted messages use a full-width `userMessageBg` row with muted `❯`, no border or vertical padding, and clean multiline continuation alignment; the live input editor now uses the same `❯` prompt glyph.
 - **Assistant list-bullet setting now preserves Pi defaults correctly** — `default` delegates unchanged to Pi's theme; only `dash` replaces the final glyph while preserving theme color and spacing.
 - **Custom tool titles no longer render twice** — generic call summaries no longer fall back to `humanizeToolName(name)`, which produced headers like `Ask User Question Ask User Question` and `Advisor Advisor` for tools without a path/query/prompt arg. `ask_user_question` / `questionnaire` now summarize as `N question(s)`; `advisor` shows its configured reviewer model and thinking effort; `AskClaude` uses the prompt. `toolHeader` also drops a summary that only repeats the title.
 
