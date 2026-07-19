@@ -144,6 +144,10 @@ interface SettingsFile {
 	escSteerEnabled?: boolean;
 	/** Bundled double-Esc-clears-draft behavior. Defaults to true. */
 	doubleEscClearEnabled?: boolean;
+	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
+	statuslineCtxStyle?: "claude" | "plain";
+	/** Show the `wt <name>` statusline segment inside a git worktree. Defaults to true. */
+	statuslineShowWorktree?: boolean;
 }
 
 let _settingsCache: { value: SettingsFile; timestamp: number } | null = null;
@@ -6212,6 +6216,8 @@ export default function (pi: ExtensionAPI) {
 			readOutputMode,
 			bashOutputMode,
 			diffCollapsedLines: diffCollapsedLimit() ?? "stock",
+			statuslineCtxStyle: settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
+			statuslineShowWorktree: settings.statuslineShowWorktree !== false,
 		};
 	};
 	const applyCcToolsUiSetting = (id: string, value: string, ctx: any): void => {
@@ -6301,6 +6307,17 @@ export default function (pi: ExtensionAPI) {
 				if (!Number.isFinite(n) || n <= 0 || n > 150) return;
 				writeSettingsKey("diffCollapsedLines", n);
 				if (ctx.hasUI) ctx.ui.setToolsExpanded?.(ctx.ui.getToolsExpanded?.());
+				break;
+			}
+			case "statuslineCtxStyle": {
+				if (value !== "claude" && value !== "plain") return;
+				// Name-shared with the statusline package (no import); it re-reads on a 5s TTL.
+				writeSettingsKey("statuslineCtxStyle", value);
+				break;
+			}
+			case "statuslineShowWorktree": {
+				// Name-shared with the statusline package (no import); it re-reads on a 5s TTL.
+				writeSettingsKey("statuslineShowWorktree", value === "on");
 				break;
 			}
 			default:

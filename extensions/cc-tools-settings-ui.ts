@@ -26,6 +26,8 @@ export interface CcToolsUiSnapshot {
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
 	diffCollapsedLines: number | "stock";
+	statuslineCtxStyle: "claude" | "plain";
+	statuslineShowWorktree: boolean;
 }
 
 export interface CcToolsSettingsController {
@@ -166,6 +168,26 @@ const SETTING_ORDER: Array<{
 				: s.bashOutputMode === "preview"
 					? "Short bash preview (one result line)"
 					: "Bash collapsed to exit/status only",
+	},
+	{
+		id: "statuslineCtxStyle",
+		label: "Statusline ctx",
+		values: ["claude", "plain"],
+		current: (s) => s.statuslineCtxStyle,
+		describe: (s) =>
+			s.statuslineCtxStyle === "claude"
+				? "Catppuccin gauge with smooth eighth-block bar"
+				: "Theme-colored gauge (pi default)",
+	},
+	{
+		id: "statuslineShowWorktree",
+		label: "Statusline wt",
+		values: ["on", "off"],
+		current: (s) => (s.statuslineShowWorktree ? "on" : "off"),
+		describe: (s) =>
+			s.statuslineShowWorktree
+				? "Show wt <name> when inside a git worktree"
+				: "Hide the worktree segment",
 	},
 ];
 
@@ -394,6 +416,8 @@ export function buildCcToolsPreview(snap: CcToolsUiSnapshot, theme: Theme, focus
 		`live=${boolLabel(snap.liveToolPreview)}`,
 		`read=${snap.readOutputMode}`,
 		`bash=${snap.bashOutputMode}`,
+		`sline=${snap.statuslineCtxStyle}`,
+		`wt=${boolLabel(snap.statuslineShowWorktree)}`,
 	];
 	lines.push(p.dim(chips.join(" · ")));
 
