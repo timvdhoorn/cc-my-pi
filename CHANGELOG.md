@@ -19,6 +19,7 @@
 - **Tree connectors lighter by default** — `DEFAULT_TOOL_BRANCH_GRAY` raised from 72 to 128, closer to Claude Code's dim gray for the `├ │ └` connector column.
 - **Assistant list bullets always render `-`** — matches Claude Code parity; the `assistantListBulletStyle` setting and `/cc-tools bullets` subcommand are removed.
 - **Collapsed diff previews default to 10 lines** — the Edit and apply_patch preview paths previously hardcoded a 32-line cap regardless of the `diffCollapsedLines` setting; all three tool paths (Create/Edit/apply_patch) now share `diffCollapsedLimit()`, whose default drops from 24 to 10. Configurable via `/cc-tools diff <1-150>` (or `reset`/`status`) and a new row in the `/cc-tools` settings UI.
+- **Thinking blocks collapse to a one-liner by default** — matches Claude Code: thinking content now renders as a single dim italic `∴ Thinking` line with a `ctrl+o to expand` hint instead of the full text inline. `ctrl+o` (the same shared tools-expanded toggle) reveals the full thinking text and collapses it again on a second press.
 
 ### Fixed
 

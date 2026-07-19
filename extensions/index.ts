@@ -1877,10 +1877,32 @@ function replaceHiddenThinkingPlaceholders(container: { children?: any[] }, mess
 	}
 }
 
+// Mirrors Pi's tools-expanded state (ctrl+o) for message children that have
+// no tool ctx. Updated by the setToolsExpanded wrapper installed at startup.
+let THINKING_BLOCKS_EXPANDED = false;
+
+function registerThinkingExpandWrapper(pi: ExtensionAPI): void {
+	const install = (ctx: any): void => {
+		if (ctx.mode !== "tui" || !ctx.hasUI) return;
+		const ui = ctx.ui as any;
+		if (!ui.__ccThinkingExpandWrapped && typeof ui.setToolsExpanded === "function") {
+			const original = ui.setToolsExpanded.bind(ui);
+			ui.setToolsExpanded = (expanded: boolean) => {
+				THINKING_BLOCKS_EXPANDED = !!expanded;
+				original(expanded);
+			};
+			ui.__ccThinkingExpandWrapped = true;
+			THINKING_BLOCKS_EXPANDED = !!ui.getToolsExpanded?.();
+		}
+	};
+	pi.on("session_start", (_event, ctx) => install(ctx));
+}
+
 class ThinkingParagraph {
 	private text: string;
 	private cachedWidth?: number;
 	private cachedLines?: string[];
+	private cachedExpanded?: boolean;
 	private chromeEpoch = -1;
 
 	constructor(
@@ -1922,6 +1944,7 @@ class ThinkingParagraph {
 	invalidate(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.cachedExpanded = undefined;
 		this.chromeEpoch = -1;
 	}
 
@@ -1929,6 +1952,7 @@ class ThinkingParagraph {
 		if (
 			this.cachedLines
 			&& this.cachedWidth === width
+			&& this.cachedExpanded === THINKING_BLOCKS_EXPANDED
 			&& this.chromeEpoch === _toolBranchVisualEpoch
 		) {
 			return this.cachedLines;
@@ -1937,6 +1961,15 @@ class ThinkingParagraph {
 		if (safeWidth <= 0) {
 			this.cachedWidth = width;
 			this.cachedLines = [""];
+			this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
+			this.chromeEpoch = _toolBranchVisualEpoch;
+			return this.cachedLines;
+		}
+		if (!THINKING_BLOCKS_EXPANDED) {
+			const label = ` ${WORKED_LINE_FG}\x1b[3m∴ Thinking\x1b[23m${RESET} ${keyHint("app.tools.expand", "to expand")}`;
+			this.cachedWidth = width;
+			this.cachedLines = [clampLineWidth(label, safeWidth)];
+			this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
 			this.chromeEpoch = _toolBranchVisualEpoch;
 			return this.cachedLines;
 		}
@@ -1947,6 +1980,7 @@ class ThinkingParagraph {
 		if (safeWidth <= PREFIX_W) {
 			this.cachedWidth = width;
 			this.cachedLines = [clampLineWidth(` ${prefix} `, safeWidth)];
+			this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
 			return this.cachedLines;
 		}
 		const lines = sanitizeRenderedTextBlockLines(md.render(safeWidth - PREFIX_W), safeWidth - PREFIX_W);
@@ -1960,6 +1994,7 @@ class ThinkingParagraph {
 		}).map((line) => clampLineWidth(line, safeWidth));
 		this.cachedWidth = width;
 		this.cachedLines = rendered;
+		this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
 		this.chromeEpoch = _toolBranchVisualEpoch;
 		return rendered;
 	}
@@ -6103,6 +6138,7 @@ export default function (pi: ExtensionAPI) {
 	registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
 	registerBundledImagePaster(pi, imagePasterEnabled());
 	registerPromptGlyphWrapper(pi);
+	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
 	patchToolRenderCacheInvalidation();
 	patchReadImageExpansion();
