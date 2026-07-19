@@ -9,7 +9,6 @@ import {
 } from "@earendil-works/pi-tui";
 
 export type ToolStyle = "outlines" | "transparent" | "default";
-export type BulletStyle = "default" | "dash";
 export type BranchPreset = "theme" | "fixed-72" | "fixed-110" | "fixed-40";
 export type OutputMode = "hidden" | "summary" | "preview";
 export type BashOutputMode = "opencode" | "summary" | "preview";
@@ -20,7 +19,6 @@ export interface CcToolsUiSnapshot {
 	extraToolOutputExpanded: boolean;
 	themeAdaptive: boolean;
 	liveToolPreview: boolean;
-	assistantListBulletStyle: BulletStyle;
 	imagePasterEnabled: boolean;
 	escSteerEnabled: boolean;
 	doubleEscClearEnabled: boolean;
@@ -83,16 +81,6 @@ const SETTING_ORDER: Array<{
 			s.branchPreset === "theme"
 				? "├ └ │ follow pi theme dim/muted"
 				: `├ └ │ fixed gray rgb(${s.branchPreset.replace("fixed-", "")})`,
-	},
-	{
-		id: "assistantListBulletStyle",
-		label: "List bullets",
-		values: ["default", "dash"],
-		current: (s) => s.assistantListBulletStyle,
-		describe: (s) =>
-			s.assistantListBulletStyle === "dash"
-				? 'Assistant lists force plain "-"'
-				: "Assistant lists use Pi theme default",
 	},
 	{
 		id: "imagePasterEnabled",
@@ -380,9 +368,8 @@ export function buildCcToolsPreview(snap: CcToolsUiSnapshot, theme: Theme, focus
 
 	lines.push("");
 	lines.push(p.title("Assistant list"));
-	const bullet = snap.assistantListBulletStyle === "dash" ? "-" : "○";
-	lines.push(`  ${bullet} first item`);
-	lines.push(`  ${bullet} second item`);
+	lines.push("  - first item");
+	lines.push("  - second item");
 
 	lines.push("");
 	// Footer chips — always reflect every setting so nothing is "invisible".
@@ -391,7 +378,6 @@ export function buildCcToolsPreview(snap: CcToolsUiSnapshot, theme: Theme, focus
 		`group=${boolLabel(snap.groupToolCalls)}`,
 		`detail=${boolLabel(snap.extraToolOutputExpanded)}`,
 		`branch=${snap.branchPreset}`,
-		`bullets=${snap.assistantListBulletStyle}`,
 		`theme=${boolLabel(snap.themeAdaptive)}`,
 		`live=${boolLabel(snap.liveToolPreview)}`,
 		`read=${snap.readOutputMode}`,

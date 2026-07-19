@@ -45,7 +45,6 @@ import {
 import {
 	openCcToolsSettingsPanel,
 	type BranchPreset,
-	type BulletStyle,
 	type CcToolsSettingsController,
 	type CcToolsUiSnapshot,
 	type OutputMode,
@@ -139,12 +138,6 @@ interface SettingsFile {
 	toolBranchRgbGray?: number;
 	/** `fixed` (default): rgb gray 72, theme-independent. `theme`: dim → muted → borderMuted. */
 	toolBranchColorMode?: "theme" | "fixed";
-	/**
-	 * Unordered list markers in assistant Markdown (not thinking blocks).
-	 * `default` delegates to Pi's theme; `dash` forces plain `-`.
-	 * Legacy `fisheye` values are treated as `default`.
-	 */
-	assistantListBulletStyle?: "default" | "dash" | "fisheye";
 	/** Bundle pi-paster image attachments and clipboard paste support. Defaults to true. */
 	imagePasterEnabled?: boolean;
 	/** Bundled Esc-abort-then-continue-queued behavior. Defaults to true. */
@@ -1553,13 +1546,6 @@ const MATH_COMMANDS: Record<string, string> = {
 
 const COPY_SAFE_MARKDOWN_LINKS_FLAG = Symbol.for("pi-claude-style-tools:copy-safe-markdown-links");
 
-const ASSISTANT_LIST_BULLET_STYLES = ["default", "dash"] as const;
-type AssistantListBulletStyle = (typeof ASSISTANT_LIST_BULLET_STYLES)[number];
-
-function assistantListBulletStyle(): AssistantListBulletStyle {
-	return readSettings().assistantListBulletStyle === "dash" ? "dash" : "default";
-}
-
 function imagePasterEnabled(): boolean {
 	return readSettings().imagePasterEnabled !== false;
 }
@@ -1572,30 +1558,12 @@ function doubleEscClearEnabled(): boolean {
 	return readSettings().doubleEscClearEnabled !== false;
 }
 
-function refreshAssistantListBulletStyle(ctx: any): void {
-	_settingsCache = null;
-	bumpToolBranchVisualEpoch();
-	if (!ctx?.hasUI) return;
-	try {
-		const ui = ctx.ui as any;
-		const roots = [ui, ui?.tui, ui?.root, ui?.chatContainer, ui?.messages];
-		for (const root of roots) {
-			if (root) visitMarkdownDescendants(root, (md) => md.invalidate?.());
-		}
-		ui.setToolsExpanded?.(ui.getToolsExpanded?.());
-		ui.invalidate?.();
-		ui.requestRender?.();
-	} catch {
-		/* noop */
-	}
-}
-
+/** Assistant Markdown lists always use a plain "-" marker, like Claude Code. */
 export function renderAssistantListBullet(
 	marker: string,
 	listBullet?: (marker: string) => string,
 ): string {
 	const rendered = listBullet ? listBullet(marker) : marker;
-	if (assistantListBulletStyle() === "default") return rendered;
 	// Preserve Pi's theme color and spacing, replacing only its first visible
 	// marker glyph. Without a theme renderer, normalize Markdown's -, *, or +.
 	if (listBullet) {
@@ -6162,7 +6130,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /cc-tools command — control tool chrome, grouping, detail, bullets, and settings UI.
+	// /cc-tools command — control tool chrome, grouping, detail, and settings UI.
 	const getBranchPreset = (): BranchPreset => {
 		if (!toolBranchColorModeFixed()) return "theme";
 		const gray = getConfiguredToolBranchGray();
@@ -6188,7 +6156,6 @@ export default function (pi: ExtensionAPI) {
 			extraToolOutputExpanded,
 			themeAdaptive: themeAdaptiveEnabled(),
 			liveToolPreview: settings.liveToolPreview !== false,
-			assistantListBulletStyle: assistantListBulletStyle() as BulletStyle,
 			imagePasterEnabled: imagePasterEnabled(),
 			escSteerEnabled: escSteerEnabled(),
 			doubleEscClearEnabled: doubleEscClearEnabled(),
@@ -6229,12 +6196,6 @@ export default function (pi: ExtensionAPI) {
 					writeSettingsKey("toolBranchRgbGray", gray);
 				} else return;
 				if (ctx.hasUI) refreshAllToolBranchVisuals(ctx);
-				break;
-			}
-			case "assistantListBulletStyle": {
-				if (value !== "default" && value !== "dash") return;
-				writeSettingsKey("assistantListBulletStyle", value);
-				refreshAssistantListBulletStyle(ctx);
 				break;
 			}
 			case "imagePasterEnabled": {
@@ -6292,7 +6253,7 @@ export default function (pi: ExtensionAPI) {
 
 	const TOOL_MODES = ["outlines", "transparent", "default"] as const;
 	const TOOL_BOOL_MODES = ["on", "off", "toggle", "status"] as const;
-	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "bullets", "ui", "settings", "status"] as const;
+	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "ui", "settings", "status"] as const;
 	const booleanMode = (raw: string | undefined, current: boolean): boolean | "status" | undefined => {
 		const mode = raw || "toggle";
 		if (mode === "on") return true;
@@ -6318,12 +6279,10 @@ export default function (pi: ExtensionAPI) {
 			`Extra detail: ${extraToolOutputExpanded ? "on" : "off"} (${rawKeyHint("ctrl+shift+o", "toggle")})`,
 			branchLine,
 			`  /cc-tools branch <0-255> | theme | fixed | reset`,
-			`List bullets: ${assistantListBulletStyle()} (assistant Markdown only)`,
-			`  /cc-tools bullets default | dash | status`,
 		].join("\n"), "info");
 	};
 	pi.registerCommand("cc-tools", {
-		description: "Open cc-tools settings UI (or style/group/bullets/branch subcommands)",
+		description: "Open cc-tools settings UI (or style/group/branch subcommands)",
 		getArgumentCompletions(prefix) {
 			const parts = prefix.trimStart().split(/\s+/);
 			const first = parts[0] ?? "";
@@ -6337,7 +6296,6 @@ export default function (pi: ExtensionAPI) {
 							m === "group" ? "Toggle grouped adjacent/concurrent tool rows"
 							: m === "detail" ? "Toggle Ctrl+Shift+O extra-detail mode"
 							: m === "branch" ? "├ └ │ gray (0-255), theme, fixed, or reset"
-							: m === "bullets" ? "Assistant list markers: Pi default or dash (-)"
 							: m === "ui" || m === "settings" ? "Open interactive settings panel with live preview"
 							: m === "status" ? "Show tool UI settings as text"
 							: m === "outlines" ? "Horizontal rules around each tool (default)"
@@ -6351,21 +6309,6 @@ export default function (pi: ExtensionAPI) {
 				return opts
 					.filter((o) => o.startsWith(second))
 					.map((o) => ({ value: `branch ${o}`, label: o, description: "Branch connector color" }));
-			}
-			if (first === "bullets" || first === "bullet" || first === "list") {
-				const second = parts[1] ?? "";
-				const opts = ["default", "dash", "status", "toggle"];
-				return opts
-					.filter((o) => o.startsWith(second))
-					.map((o) => ({
-						value: `bullets ${o}`,
-						label: o,
-						description:
-							o === "default" ? "Use Pi theme's native bullet"
-								: o === "dash" ? "Force plain markdown - bullets"
-									: o === "toggle" ? "Flip default ↔ dash"
-									: "Show current list bullet style",
-					}));
 			}
 			if (first === "group" || first === "detail" || first === "extra") {
 				const second = parts[1] ?? "";
@@ -6462,43 +6405,10 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			if (sub === "bullets" || sub === "bullet" || sub === "list") {
-				const arg = parts[1] ?? "status";
-				const current = assistantListBulletStyle();
-				if (arg === "status") {
-					if (ctx.hasUI) {
-						ctx.ui.notify(
-							`List bullets: ${current} (assistant Markdown unordered lists only)`,
-							"info",
-						);
-					}
-					return;
-				}
-				let next: AssistantListBulletStyle | undefined;
-				if (arg === "toggle") next = current === "dash" ? "default" : "dash";
-				else if (arg === "fisheye") next = "default"; // legacy alias
-				else if ((ASSISTANT_LIST_BULLET_STYLES as readonly string[]).includes(arg)) {
-					next = arg as AssistantListBulletStyle;
-				}
-				if (!next) {
-					if (ctx.hasUI) {
-						ctx.ui.notify("Usage: /cc-tools bullets default | dash | toggle | status", "error");
-					}
-					return;
-				}
-				writeSettingsKey("assistantListBulletStyle", next);
-				refreshAssistantListBulletStyle(ctx);
-				if (ctx.hasUI) {
-					const sample = next === "dash" ? "- item" : "Pi theme default";
-					ctx.ui.notify(`List bullets → ${next}  (${sample})`, "info");
-				}
-				return;
-			}
-
 			if (!(TOOL_MODES as readonly string[]).includes(sub)) {
 				if (ctx.hasUI) {
 					ctx.ui.notify(
-						`Unknown option "${sub}". Try /cc-tools status, /cc-tools bullets dash, or /cc-tools group toggle.`,
+						`Unknown option "${sub}". Try /cc-tools status, /cc-tools branch theme, or /cc-tools group toggle.`,
 						"error",
 					);
 				}

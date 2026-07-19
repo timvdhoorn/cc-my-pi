@@ -305,42 +305,20 @@ const neq = (a: string[], b: string[], label: string) => {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Assistant list-bullet setting controls final rendered glyph.
+// 9. Assistant list bullets always render as a plain "-", regardless of theme.
 // ---------------------------------------------------------------------------
 {
-	const realHome = process.env.HOME;
-	const tmpHome = `${realHome}/.pi-bullet-render-test-${Date.now()}`;
-	const fs = await import("node:fs");
-	fs.mkdirSync(`${tmpHome}/.pi`, { recursive: true });
 	const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-	const ccTools = (fakePi as any).commands.get("cc-tools");
-	if (!ccTools) throw new Error("cc-tools command not registered");
-	const ctx = { hasUI: false } as any;
 	const piCircleStyle = (_marker: string) => "\x1b[90m○\x1b[0m ";
-	process.env.HOME = tmpHome;
-	try {
-		await ccTools.handler("bullets dash", ctx);
-		const dash = stripAnsi(ext.renderAssistantListBullet("- ", piCircleStyle));
-		if (dash !== "- ") {
-			throw new Error(`dash setting did not replace Pi theme circle: ${JSON.stringify(dash)}`);
-		}
-
-		await ccTools.handler("bullets default", ctx);
-		const defaultBullet = stripAnsi(ext.renderAssistantListBullet("- ", piCircleStyle));
-		if (defaultBullet !== "○ ") {
-			throw new Error(`default setting did not preserve Pi theme bullet: ${JSON.stringify(defaultBullet)}`);
-		}
-
-		await ccTools.handler("bullets fisheye", ctx); // legacy alias
-		const legacy = stripAnsi(ext.renderAssistantListBullet("- ", piCircleStyle));
-		if (legacy !== "○ ") {
-			throw new Error(`legacy fisheye setting did not migrate to Pi default: ${JSON.stringify(legacy)}`);
-		}
-		console.log("OK  assistant lists: Pi default + forced dash + legacy migration");
-	} finally {
-		process.env.HOME = realHome;
-		fs.rmSync(tmpHome, { recursive: true, force: true });
+	const dash = stripAnsi(ext.renderAssistantListBullet("- ", piCircleStyle));
+	if (dash !== "- ") {
+		throw new Error(`themed marker not forced to dash: ${JSON.stringify(dash)}`);
 	}
+	const bare = stripAnsi(ext.renderAssistantListBullet("* "));
+	if (bare !== "- ") {
+		throw new Error(`bare marker not normalized to dash: ${JSON.stringify(bare)}`);
+	}
+	console.log("OK  assistant lists: always dash");
 }
 
 console.log("\nAll correctness checks passed.");
