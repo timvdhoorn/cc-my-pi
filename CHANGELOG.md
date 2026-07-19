@@ -17,6 +17,7 @@
 - **Tool rows use Claude Code's glyphs** — the tool status bullet is now `⏺` (U+23FA) on macOS, falling back to `●` on other platforms where the glyph is poorly supported. The connector under a single tool (or the last tool in a grouped block) is now the `⎿` result arm (U+23BF); mid-tree `├`/`│` connectors are unchanged. Agent-family breathe glyphs keep their `● • ·` optical-size family. Both new glyphs are single display cells, so column alignment is unaffected.
 - **Tree connectors lighter by default** — `DEFAULT_TOOL_BRANCH_GRAY` raised from 72 to 128, closer to Claude Code's dim gray for the `├ │ └` connector column.
 - **Assistant list bullets always render `-`** — matches Claude Code parity; the `assistantListBulletStyle` setting and `/cc-tools bullets` subcommand are removed.
+- **Collapsed diff previews default to 10 lines** — the Edit and apply_patch preview paths previously hardcoded a 32-line cap regardless of the `diffCollapsedLines` setting; all three tool paths (Create/Edit/apply_patch) now share `diffCollapsedLimit()`, whose default drops from 24 to 10. Configurable via `/cc-tools diff <1-150>` (or `reset`/`status`) and a new row in the `/cc-tools` settings UI.
 
 ### Fixed
 

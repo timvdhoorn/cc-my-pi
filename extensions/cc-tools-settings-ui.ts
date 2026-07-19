@@ -25,6 +25,7 @@ export interface CcToolsUiSnapshot {
 	branchPreset: BranchPreset;
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
+	diffCollapsedLines: number;
 }
 
 export interface CcToolsSettingsController {
@@ -81,6 +82,13 @@ const SETTING_ORDER: Array<{
 			s.branchPreset === "theme"
 				? "├ └ │ follow pi theme dim/muted"
 				: `├ └ │ fixed gray rgb(${s.branchPreset.replace("fixed-", "")})`,
+	},
+	{
+		id: "diffCollapsedLines",
+		label: "Diff preview",
+		values: ["10", "24", "32", "60"],
+		current: (s) => String(s.diffCollapsedLines),
+		describe: (s) => `Collapsed diffs show at most ${s.diffCollapsedLines} lines`,
 	},
 	{
 		id: "imagePasterEnabled",
@@ -378,6 +386,7 @@ export function buildCcToolsPreview(snap: CcToolsUiSnapshot, theme: Theme, focus
 		`group=${boolLabel(snap.groupToolCalls)}`,
 		`detail=${boolLabel(snap.extraToolOutputExpanded)}`,
 		`branch=${snap.branchPreset}`,
+		`diff=${snap.diffCollapsedLines}`,
 		`theme=${boolLabel(snap.themeAdaptive)}`,
 		`live=${boolLabel(snap.liveToolPreview)}`,
 		`read=${snap.readOutputMode}`,
