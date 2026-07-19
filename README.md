@@ -30,6 +30,7 @@ Claude Code inspired tool rendering for Pi — Shiki-powered diffs, status dots,
 - **Subagent completion notifications** restyled to match the same Claude-style tool rows
 - **RTK rewrite integration** that folds rewrite notices into the bash tool row with a muted `(RTK)` badge and expanded-only rewrite details
 - **Built-in image paster** — clipboard images and pasted image paths become first-class attachments through bundled `pi-paster` (toggle with `imagePasterEnabled`)
+- **Bundled Esc behaviors** — Claude Code's two Escape reflexes, both on by default and toggleable live from `/cc-tools`: Esc while the agent runs aborts and auto-continues whatever was queued (`escSteerEnabled`), and double-Esc on a non-empty idle draft clears it (`doubleEscClearEnabled`)
 - **Transparent tool backgrounds** in `transparent` or `border` mode
 - **Theme-adaptive palette** — borders, branch connectors, dim text, spinner accent, and diff backgrounds automatically follow the active pi theme (set `themeAdaptive: false` to keep the fixed Claude-style palette)
 - **Light Ghostty-sync themes** — edit/write diffs use `github-light` highlighting and light-tinted diff rows; tool pending dots use softer chrome colors
@@ -61,7 +62,9 @@ Set in `.pi/settings.json` or `~/.pi/settings.json`:
   "themeAdaptive": true,
   "diffTheme": "github-dark",
   "assistantListBulletStyle": "default",
-  "imagePasterEnabled": true
+  "imagePasterEnabled": true,
+  "escSteerEnabled": true,
+  "doubleEscClearEnabled": true
 }
 ```
 
@@ -143,9 +146,38 @@ Use `/cc-tools` to control tool UI at runtime:
 /cc-tools bullets toggle  # flip default ↔ dash
 ```
 
-The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, theme-adaptive, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
+The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, Esc continues queue, double-Esc clears draft, theme-adaptive, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
 
 `assistantListBulletStyle` only affects **assistant Markdown unordered lists** (the rows that this package restyles). Thinking blocks and user messages are unchanged.
+
+### Bundled Esc behaviors
+
+Two Escape reflexes from Claude Code ship bundled and **default to on**. Toggle
+either live from the `/cc-tools` settings panel (no reload needed):
+
+| Setting | Default | Behavior |
+| --------- | --------- | ---------- |
+| `escSteerEnabled` | `true` | While the agent runs, Esc aborts the current run and then auto-continues whatever was queued (steer / follow-up) instead of only pausing. Composes with the optional `git:github.com/tmustier/pi-queue-steer` package and with Pi's native queue. |
+| `doubleEscClearEnabled` | `true` | On a non-empty idle draft, double-Esc (within 800 ms) clears the editor, matching Claude Code. Pi's own empty-editor double-Esc (tree / fork selector) is untouched. |
+
+`escSteerEnabled` is the bundled copy of the standalone `pi-esc-steer` package
+and shares its feature marker, so the two are mutually exclusive automatically.
+`doubleEscClearEnabled` is vendored from
+[`@thisux/pi-double-esc-clear`](https://www.npmjs.com/package/@thisux/pi-double-esc-clear)
+v1.0.3 (MIT, author Sanju <https://sanju.sh/>).
+
+If you previously installed either standalone package, remove it so it is not
+loaded twice:
+
+```bash
+pi remove npm:pi-esc-steer
+pi remove npm:@thisux/pi-double-esc-clear
+```
+
+esc-steer dedups automatically via the shared feature marker; double-esc-clear
+cannot detect the standalone package, so a leftover install would double-wrap
+(harmless — the inner clear empties the draft and the outer sees nothing to do —
+but removing it is cleaner).
 
 ### Output modes
 

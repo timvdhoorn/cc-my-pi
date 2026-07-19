@@ -18,5 +18,7 @@
   "diffTheme": "github-dark",
   "diffColors": {},
   "assistantListBulletStyle": "default",
-  "imagePasterEnabled": true
+  "imagePasterEnabled": true,
+  "escSteerEnabled": true,
+  "doubleEscClearEnabled": true
 }

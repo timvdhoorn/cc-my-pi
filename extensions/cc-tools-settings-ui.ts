@@ -22,6 +22,8 @@ export interface CcToolsUiSnapshot {
 	liveToolPreview: boolean;
 	assistantListBulletStyle: BulletStyle;
 	imagePasterEnabled: boolean;
+	escSteerEnabled: boolean;
+	doubleEscClearEnabled: boolean;
 	branchPreset: BranchPreset;
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
@@ -101,6 +103,26 @@ const SETTING_ORDER: Array<{
 			s.imagePasterEnabled
 				? "Clipboard images and pasted image paths become attachments"
 				: "Image attachment paste support disabled (reload required)",
+	},
+	{
+		id: "escSteerEnabled",
+		label: "Esc continues queue",
+		values: ["on", "off"],
+		current: (s) => (s.escSteerEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.escSteerEnabled
+				? "Esc while the agent runs aborts, then auto-sends what was queued"
+				: "Esc while running only aborts (no auto-continue)",
+	},
+	{
+		id: "doubleEscClearEnabled",
+		label: "Double-Esc clears draft",
+		values: ["on", "off"],
+		current: (s) => (s.doubleEscClearEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.doubleEscClearEnabled
+				? "Double-Esc on a non-empty idle draft clears it (like Claude Code)"
+				: "Double-Esc leaves a non-empty draft untouched",
 	},
 	{
 		id: "themeAdaptive",

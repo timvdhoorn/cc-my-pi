@@ -52,6 +52,8 @@ import {
 	type ToolStyle,
 } from "./cc-tools-settings-ui.js";
 import { registerBundledImagePaster } from "./image-paster.js";
+import { registerBundledEscSteer } from "./esc-steer.js";
+import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -144,6 +146,10 @@ interface SettingsFile {
 	assistantListBulletStyle?: "default" | "dash" | "fisheye";
 	/** Bundle pi-paster image attachments and clipboard paste support. Defaults to true. */
 	imagePasterEnabled?: boolean;
+	/** Bundled Esc-abort-then-continue-queued behavior. Defaults to true. */
+	escSteerEnabled?: boolean;
+	/** Bundled double-Esc-clears-draft behavior. Defaults to true. */
+	doubleEscClearEnabled?: boolean;
 }
 
 let _settingsCache: { value: SettingsFile; timestamp: number } | null = null;
@@ -1513,6 +1519,14 @@ function assistantListBulletStyle(): AssistantListBulletStyle {
 
 function imagePasterEnabled(): boolean {
 	return readSettings().imagePasterEnabled !== false;
+}
+
+function escSteerEnabled(): boolean {
+	return readSettings().escSteerEnabled !== false;
+}
+
+function doubleEscClearEnabled(): boolean {
+	return readSettings().doubleEscClearEnabled !== false;
 }
 
 function refreshAssistantListBulletStyle(ctx: any): void {
@@ -6024,6 +6038,8 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 // ===========================================================================
 
 export default function (pi: ExtensionAPI) {
+	registerBundledEscSteer(pi, escSteerEnabled);
+	registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
 	registerBundledImagePaster(pi, imagePasterEnabled());
 	patchToolExecutionBackgroundSync();
 	patchToolRenderCacheInvalidation();
@@ -6078,6 +6094,8 @@ export default function (pi: ExtensionAPI) {
 			liveToolPreview: settings.liveToolPreview !== false,
 			assistantListBulletStyle: assistantListBulletStyle() as BulletStyle,
 			imagePasterEnabled: imagePasterEnabled(),
+			escSteerEnabled: escSteerEnabled(),
+			doubleEscClearEnabled: doubleEscClearEnabled(),
 			branchPreset: getBranchPreset(),
 			readOutputMode,
 			bashOutputMode,
@@ -6126,6 +6144,14 @@ export default function (pi: ExtensionAPI) {
 			case "imagePasterEnabled": {
 				writeSettingsKey("imagePasterEnabled", value === "on");
 				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply image paster changes", "info");
+				break;
+			}
+			case "escSteerEnabled": {
+				writeSettingsKey("escSteerEnabled", value === "on");
+				break;
+			}
+			case "doubleEscClearEnabled": {
+				writeSettingsKey("doubleEscClearEnabled", value === "on");
 				break;
 			}
 			case "themeAdaptive": {
