@@ -472,7 +472,7 @@ function isTerminalImageLine(line: string): boolean {
 }
 
 function normalizeLeadingCheckGlyph(line: string): string {
-	return line.replace(/^((?:\x1b\[[0-9;]*m|[ \t]|[├└│─])*)[✓✔]((?:\x1b\[[0-9;]*m)*)(?=\s)/, "$1●$2");
+	return line.replace(/^((?:\x1b\[[0-9;]*m|[ \t]|[├└⎿│─])*)[✓✔]((?:\x1b\[[0-9;]*m)*)(?=\s)/, `$1${STATUS_DOT_FILLED}$2`);
 }
 
 function stripOuterBackgroundAnsi(line: string): string {
@@ -569,7 +569,9 @@ function getToolGroupOverallStatus(tools: any[]): ToolStatus {
 // Claude Code: solid filled circle that is either fully present or fully gone
 // while pending — never a hollow outlined ○. Classic ● + bold is the sweet
 // spot for ordinary tools. Agent-family tools use a breathing size cycle.
-const STATUS_DOT_FILLED = "●";
+// Claude Code uses ⏺ (U+23FA) on macOS and falls back to ● elsewhere because
+// ⏺ coverage is poor in common Windows/Linux terminal fonts.
+const STATUS_DOT_FILLED = process.platform === "darwin" ? "⏺" : "●";
 const STATUS_DOT_BOLD = "\x1b[1m";
 // Single-cell glyphs only (⬤ is often double-width and walks the baseline).
 // Optical sizes share the same cell so the center stays put while breathing:
@@ -642,7 +644,7 @@ function stripGroupedToolLabel(line: string, label: string | undefined): string 
 
 function isChromeOnlyLine(line: string): boolean {
 	const plain = stripAnsi(line).trim();
-	return plain.length === 0 || /^[─━╭╮╰╯┌┐└┘│├┤┬┴┼\s]+$/.test(plain);
+	return plain.length === 0 || /^[─━╭╮╰╯┌┐└┘│├┤┬┴┼⎿\s]+$/.test(plain);
 }
 
 function stripToolChrome(lines: string[]): string[] {
@@ -654,7 +656,7 @@ function stripLeadingToolStatus(line: string): string {
 	// Include Agent breathe glyphs (·) and the blank off-phase (space) so the title
 	// never keeps a leftover marker that shifts when size changes.
 	return line.replace(
-		/^((?:\x1b\[[0-9;]*m|[ \t]|[├└│─])*)(?:\x1b\[[0-9;]*m)*(?:[●○✗■⬤•·]| )(?:\x1b\[[0-9;]*m)*\s+/,
+		/^((?:\x1b\[[0-9;]*m|[ \t]|[├└⎿│─])*)(?:\x1b\[[0-9;]*m)*(?:[●⏺○✗■⬤•·]| )(?:\x1b\[[0-9;]*m)*\s+/,
 		"$1",
 	);
 }
@@ -739,7 +741,7 @@ function getExpandedToolGroupLines(tool: any, width: number, groupedLabel?: stri
 
 function branchPrefix(index: number, total: number, theme?: Theme): string {
 	// Bare tee/corner only — no horizontal ─ arm.
-	const branch = index === total - 1 ? "└" : "├";
+	const branch = index === total - 1 ? "⎿" : "├";
 	const rule = currentToolBranchAnsi(theme);
 	return ` ${rule}${branch}${TRANSPARENT_RESET} `;
 }
@@ -1058,10 +1060,10 @@ function formatTodoOverlayLines(lines: string[], width: number): string[] {
 		const plain = stripAnsi(line);
 		if (/^[●○]\s+Todos\s+—/.test(plain)) return clampLineWidth(` ${line}`, width);
 		// Magic Context emits `├─` / `└─` or bare `├` / `└`; strip any arm to bare tee/corner.
-		if (!/^[├└]─?\s+[✓○◐✗●⬤•]\s/.test(plain) && !/^[├└]─?\s+/.test(plain)) return line;
+		if (!/^[├└⎿]─?\s+[✓○◐✗●⏺⬤•]\s/.test(plain) && !/^[├└⎿]─?\s+/.test(plain)) return line;
 		const withoutTodoHash = line.replace(/#(?=[A-Za-z0-9_-]+)/, "");
-		const bare = withoutTodoHash.replace(/([├└])─/, "$1");
-		const colored = bare.replace(/[├└]/, (branch) => `${currentToolBranchAnsi()}${branch}${TRANSPARENT_RESET}`);
+		const bare = withoutTodoHash.replace(/([├└⎿])─/, "$1");
+		const colored = bare.replace(/[├└⎿]/, (branch) => `${currentToolBranchAnsi()}${branch}${TRANSPARENT_RESET}`);
 		return clampLineWidth(` ${colored}`, width);
 	});
 }
@@ -1807,7 +1809,7 @@ class DottedParagraph {
 		const PREFIX_W = 3;
 		if (safeWidth <= PREFIX_W) {
 			this.cachedWidth = width;
-			this.cachedLines = [clampLineWidth(" ● ", safeWidth)];
+			this.cachedLines = [clampLineWidth(` ${STATUS_DOT_FILLED} `, safeWidth)];
 			return this.cachedLines;
 		}
 		const contentWidth = safeWidth - PREFIX_W;
@@ -1824,7 +1826,7 @@ class DottedParagraph {
 			if (isCodeBoxChromeLine(line)) return `   ${line}`;
 			if (!dotPlaced) {
 				dotPlaced = true;
-				return ` ● ${line}`;
+				return ` ${STATUS_DOT_FILLED} ${line}`;
 			}
 			return `   ${line}`;
 		}).map((line) => {
@@ -2987,7 +2989,7 @@ function padToWidth(line: string, width: number): string {
 function markedContinuationPrefix(prefix: string): string {
 	const plain = stripAnsi(prefix);
 	// Match bare leads (`├ `/`└ `/`│ `) and legacy armed forms (`├─ `/`└─ `/`│  `).
-	const branchMatch = /^(\s*)(│ {2}|│ |├─ |└─ |├ |└ )/.exec(plain);
+	const branchMatch = /^(\s*)(│ {2}|│ |├─ |└─ |⎿ |├ |└ )/.exec(plain);
 	if (branchMatch) {
 		const indent = branchMatch[1];
 		// Keep the same structure width as the lead glyph so wraps stay aligned.
@@ -3486,7 +3488,7 @@ function applyToolBranchColor(theme?: any): void {
 /** Strip baked ├/└/│ prefixes (short or long arm) so branch color can be reapplied. */
 function stripBranchMarkupLine(line: string): string {
 	let plain = stripAnsi(line);
-	plain = plain.replace(/^\s*[├└]─?\s*/, "");
+	plain = plain.replace(/^\s*[├└⎿]─?\s*/, "");
 	plain = plain.replace(/^\s*│\s{0,2}/, "");
 	return plain;
 }

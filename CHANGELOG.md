@@ -11,6 +11,10 @@
 - **Interactive `/cc-tools` settings panel** — bare `/cc-tools` (or `/cc-tools ui`) opens an overlay with all major display options. Cycling a value applies it live and refreshes an ASCII preview of tool chrome, grouping, bullets, and output modes. Existing subcommands (`outlines`, `group`, `bullets`, `branch`, `status`, …) still work.
 - **Configurable assistant list bullets** — setting `assistantListBulletStyle` (`default` delegates to Pi's theme, `dash` forces `-`) and runtime `/cc-tools bullets default|dash|toggle|status`. Legacy `fisheye` config maps to `default`. Only assistant Markdown unordered lists are affected; thinking blocks stay unchanged.
 
+### Changed
+
+- **Tool rows use Claude Code's glyphs** — the tool status bullet is now `⏺` (U+23FA) on macOS, falling back to `●` on other platforms where the glyph is poorly supported. The connector under a single tool (or the last tool in a grouped block) is now the `⎿` result arm (U+23BF); mid-tree `├`/`│` connectors are unchanged. Agent-family breathe glyphs keep their `● • ·` optical-size family. Both new glyphs are single display cells, so column alignment is unaffected.
+
 ### Fixed
 
 - **User prompts now match Claude Code's compact row style** — submitted messages use a full-width `userMessageBg` row with muted `❯`, no border or vertical padding, and clean multiline continuation alignment; the live input editor now uses the same `❯` prompt glyph.
