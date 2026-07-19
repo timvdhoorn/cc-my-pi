@@ -2204,6 +2204,55 @@ function patchPromptEditorRender(): void {
 	);
 }
 
+// The prototype patch above only reaches editors that extend the CustomEditor
+// class pi's loader aliases for extension code. Editors built by cc-tools' own
+// npm dependencies (pi-paster's PasterEditor) extend the CustomEditor copy in
+// cc-tools/node_modules — a different class object — so they miss the patch.
+// This factory wrapper decorates the active editor INSTANCE instead,
+// class-agnostic, composing like esc-steer (immediate + deferred install).
+const PROMPT_GLYPH_FEATURE = "cc-prompt-glyph";
+const EDITOR_FEATURES_SYMBOL = Symbol.for("@tmustier/pi-editor-features");
+
+function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
+	const install = (ctx: any): void => {
+		if (ctx.mode !== "tui") return;
+		const previous = ctx.ui.getEditorComponent();
+		const features: ReadonlySet<string> =
+			(previous as any)?.[EDITOR_FEATURES_SYMBOL] ?? new Set();
+		if (features.has(PROMPT_GLYPH_FEATURE)) return;
+		const factory = ((tui: any, theme: any, keybindings: any) => {
+			const editor = previous?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
+			const originalRender = editor.render.bind(editor);
+			editor.render = (width: number): string[] => {
+				const lines = originalRender(width);
+				if (!Array.isArray(lines) || lines.length < 3 || width < 2) return lines;
+				// Skip when the prototype patch (or a nested wrapper) already drew it.
+				if (stripAnsi(lines[1] ?? "").trimStart().startsWith("❯")) return lines;
+				lines[1] = prefixEditorPromptLine(
+					lines[1] ?? "",
+					(editor as any).getPaddingX?.() ?? 0,
+					width,
+					BORDER_COLOR,
+					RESET,
+					truncateToWidth,
+				);
+				return lines;
+			};
+			return editor;
+		}) as any;
+		factory[EDITOR_FEATURES_SYMBOL] = new Set([...features, PROMPT_GLYPH_FEATURE]);
+		ctx.ui.setEditorComponent(factory);
+	};
+	const installLate = (ctx: any): void => {
+		install(ctx);
+		// Re-install after other extensions (pi-paster replaces the factory
+		// outright; queue-steer/esc-steer wrap late) so we stay in the chain.
+		setTimeout(() => install(ctx), 0);
+	};
+	pi.on("session_start", (_event, ctx) => installLate(ctx));
+	pi.on("agent_start", (_event, ctx) => installLate(ctx));
+}
+
 function patchAssistantMessages(): void {
 	const proto = AssistantMessageComponent.prototype as any;
 	if (proto[ASSISTANT_PATCH_FLAG]) return;
@@ -6047,6 +6096,7 @@ export default function (pi: ExtensionAPI) {
 	registerBundledEscSteer(pi, escSteerEnabled);
 	registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
 	registerBundledImagePaster(pi, imagePasterEnabled());
+	registerPromptGlyphWrapper(pi);
 	patchToolExecutionBackgroundSync();
 	patchToolRenderCacheInvalidation();
 	patchReadImageExpansion();
