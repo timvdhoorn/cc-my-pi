@@ -747,8 +747,10 @@ function getExpandedToolGroupLines(tool: any, width: number, groupedLabel?: stri
 }
 
 function branchPrefix(index: number, total: number, theme?: Theme): string {
-	// Bare tee/corner only — no horizontal ─ arm.
-	const branch = index === total - 1 ? "⎿" : "├";
+	// Bare tee/corner only — no horizontal ─ arm. Claude Code's ⎿ result arm
+	// marks a lone tool's result; inside a multi-tool tree the └ corner reads
+	// better against the ├/│ siblings.
+	const branch = total === 1 ? "⎿" : index === total - 1 ? "└" : "├";
 	const rule = currentToolBranchAnsi(theme);
 	return ` ${rule}${branch}${TRANSPARENT_RESET} `;
 }
