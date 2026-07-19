@@ -598,7 +598,7 @@ export default function (pi: ExtensionAPI) {
 	function buildWorkingMessage(): string {
 		const elapsed = Date.now() - (agentStartTime || turnStartTime);
 		const tokenCount = Math.max(0, Math.round(responseLength / 4));
-		const statusParts: string[] = [];
+		const statusParts: string[] = ["esc to interrupt"];
 
 		if (thinkingStatus === "thinking") {
 			statusParts.push(`thinking${getEffortSuffix()}`);
