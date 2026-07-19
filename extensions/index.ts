@@ -739,6 +739,38 @@ function getCompactToolLine(tool: any, width: number, groupedLabel?: string): st
 	return clampLineWidth(content || getToolName(tool), width);
 }
 
+/**
+ * Muted one-liner of a tool's result for collapsed group rows, extracted from
+ * the tool's own rendered output (there is no central summary builder). The
+ * first stripped body line AFTER the call line is the status line the
+ * ungrouped view shows (e.g. "5 lines returned • ctrl+o to toggle"); the
+ * toggle hint is dropped because the group header already shows one.
+ */
+function getCompactToolSummary(tool: any, width: number, groupedLabel?: string): string {
+	if (getToolStatusForGroup(tool) === "pending") return "";
+	let body: string[];
+	try {
+		body = stripToolChrome(tool.render(Math.max(1, width)));
+	} catch {
+		return "";
+	}
+	// body[0] is the call/title line; the summary is the next line.
+	const raw = body[1];
+	if (!raw) return "";
+	let plain = stripAnsi(removeGroupedToolPrefix(raw, groupedLabel)).trim();
+	if (!plain) return "";
+	const hintPlain = stripAnsi(toolOutputDetailHint(undefined as any, false, true)).trim();
+	if (hintPlain && plain.endsWith(hintPlain)) {
+		plain = plain.slice(0, plain.length - hintPlain.length).replace(/[\s•·]+$/, "").trim();
+	}
+	return plain;
+}
+
+function appendCompactSummary(title: string, summary: string): string {
+	if (!summary) return title;
+	return `${title} ${FG_DIM}· ${summary}${TRANSPARENT_RESET}`;
+}
+
 function getExpandedToolGroupLines(tool: any, width: number, groupedLabel?: string): string[] {
 	const lines = stripToolChrome(tool.render(Math.max(1, width)))
 		.map((line) => removeGroupedToolPrefix(line, groupedLabel))
@@ -926,7 +958,10 @@ class ToolGroupComponent extends Container {
 			const tool = this.tools[index];
 			const rawLines = this.expanded
 				? getExpandedToolGroupLines(tool, childWidth, groupedName ? label : undefined)
-				: [getCompactToolLine(tool, childWidth, groupedName ? label : undefined)];
+				: [appendCompactSummary(
+						getCompactToolLine(tool, childWidth, groupedName ? label : undefined),
+						getCompactToolSummary(tool, childWidth, groupedName ? label : undefined),
+					)];
 			const branched = formatBranchedToolLines(
 				rawLines,
 				index,

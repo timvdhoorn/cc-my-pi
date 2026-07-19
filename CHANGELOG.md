@@ -14,6 +14,7 @@
 
 ### Changed
 
+- **Collapsed grouped tool rows now show their result summary** — with tool grouping on, each collapsed child line keeps its muted result summary as a same-line suffix (e.g. `● Ctx Execute · 5 lines returned`) instead of dropping it entirely; the `ctrl+o to toggle` hint is not repeated per child since the group header already shows one.
 - **Tool rows use Claude Code's glyphs** — the tool status bullet is now `⏺` (U+23FA) on macOS, falling back to `●` on other platforms where the glyph is poorly supported. The connector under a single tool (or the last tool in a grouped block) is now the `⎿` result arm (U+23BF); mid-tree `├`/`│` connectors are unchanged. Agent-family breathe glyphs keep their `● • ·` optical-size family. Both new glyphs are single display cells, so column alignment is unaffected.
 
 ### Fixed
