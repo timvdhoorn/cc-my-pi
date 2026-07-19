@@ -3204,9 +3204,17 @@ function liveToolPreviewLimit(): number {
 	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 5;
 }
 
-function diffCollapsedLimit(): number {
+/** Explicit collapsed diff cap, or undefined = stock per-site defaults. */
+function diffCollapsedLimit(): number | undefined {
 	const value = readSettings().diffCollapsedLines;
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 10;
+	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+}
+
+function collapsedMultiOpLines(maxShown: number): number {
+	const limit = diffCollapsedLimit();
+	return limit !== undefined
+		? Math.max(4, Math.floor(limit / Math.max(1, maxShown)))
+		: Math.max(8, Math.floor(MAX_PREVIEW_LINES / Math.max(1, maxShown)));
 }
 
 function collapsedPreviewCount(expanded: boolean, fallback: number): number {
@@ -4896,7 +4904,7 @@ function renderEditPreviewBody(
 	if (operations.length === 1) {
 		const [diff] = diffs;
 		const line = lines[0] ?? getFirstChangedNewLine(diff);
-		renderSplit(diff, language, ctx.expanded ? MAX_PREVIEW_LINES : diffCollapsedLimit(), dc, branchWidth)
+		renderSplit(diff, language, ctx.expanded ? MAX_PREVIEW_LINES : (diffCollapsedLimit() ?? 32), dc, branchWidth)
 			.then((rendered) => {
 				if (ctx.state._pk !== key) return;
 				ctx.state._ptBody = `${summarizeDiff(diff.added, diff.removed)}${formatLineMeta(line, theme)}\n${rendered}`;
@@ -4914,7 +4922,7 @@ function renderEditPreviewBody(
 	const maxShown = ctx.expanded ? operations.length : Math.min(operations.length, 3);
 	const previewLines = ctx.expanded
 		? Math.max(6, Math.floor(MAX_RENDER_LINES / Math.max(1, maxShown)))
-		: Math.max(4, Math.floor(diffCollapsedLimit() / Math.max(1, maxShown)));
+		: collapsedMultiOpLines(maxShown);
 	mapWithConcurrency(diffs.slice(0, maxShown), DIFF_RENDER_CONCURRENCY, async (diff, index) => {
 		const line = lines[index] ?? getFirstChangedNewLine(diff);
 		return renderSplit(diff, language, previewLines, dc, branchWidth)
@@ -5710,7 +5718,7 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 	ctx.state._openAiPatchFiles = preview.changes.map((change) => change.displayPath);
 
 	const diffWidth = branchDiffWidth();
-	const key = `apply-preview:${ctx.state._applyPatchMetaKey ?? hashText(patchText)}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit()}`;
+	const key = `apply-preview:${ctx.state._applyPatchMetaKey ?? hashText(patchText)}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 	if (ctx.state._applyPatchPreviewKey !== key) {
 		ctx.state._applyPatchPreviewKey = key;
 		ctx.state._applyPatchPreviewBody = theme.fg("muted", "(rendering…)");
@@ -5718,7 +5726,7 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 		const dc = resolveDiffColors(theme);
 		if (preview.changes.length === 1) {
 			const [change] = preview.changes;
-			renderSplit(change.diff, change.language, ctx.expanded ? MAX_PREVIEW_LINES : diffCollapsedLimit(), dc, diffWidth)
+			renderSplit(change.diff, change.language, ctx.expanded ? MAX_PREVIEW_LINES : (diffCollapsedLimit() ?? 32), dc, diffWidth)
 				.then((rendered) => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
 					ctx.state._applyPatchPreviewBody = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`;
@@ -5735,7 +5743,7 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 			const maxShown = ctx.expanded ? preview.changes.length : Math.min(preview.changes.length, 3);
 			const previewLines = ctx.expanded
 				? Math.max(6, Math.floor(MAX_RENDER_LINES / Math.max(1, maxShown)))
-				: Math.max(4, Math.floor(diffCollapsedLimit() / Math.max(1, maxShown)));
+				: collapsedMultiOpLines(maxShown);
 			mapWithConcurrency(preview.changes.slice(0, maxShown), DIFF_RENDER_CONCURRENCY, async (change, index) =>
 				renderSplit(change.diff, change.language, previewLines, dc, diffWidth)
 					.then((rendered) => `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`)
@@ -6203,7 +6211,7 @@ export default function (pi: ExtensionAPI) {
 			branchPreset: getBranchPreset(),
 			readOutputMode,
 			bashOutputMode,
-			diffCollapsedLines: diffCollapsedLimit(),
+			diffCollapsedLines: diffCollapsedLimit() ?? "stock",
 		};
 	};
 	const applyCcToolsUiSetting = (id: string, value: string, ctx: any): void => {
@@ -6284,6 +6292,11 @@ export default function (pi: ExtensionAPI) {
 				break;
 			}
 			case "diffCollapsedLines": {
+				if (value === "stock") {
+					writeSettingsKey("diffCollapsedLines", undefined);
+					if (ctx.hasUI) ctx.ui.setToolsExpanded?.(ctx.ui.getToolsExpanded?.());
+					break;
+				}
 				const n = Number.parseInt(value, 10);
 				if (!Number.isFinite(n) || n <= 0 || n > 150) return;
 				writeSettingsKey("diffCollapsedLines", n);
@@ -6328,8 +6341,8 @@ export default function (pi: ExtensionAPI) {
 			`Extra detail: ${extraToolOutputExpanded ? "on" : "off"} (${rawKeyHint("ctrl+shift+o", "toggle")})`,
 			branchLine,
 			`  /cc-tools branch <0-255> | theme | fixed | reset`,
-			`Diff preview: ${diffCollapsedLimit()} collapsed lines`,
-			`  /cc-tools diff <1-150> | reset | status`,
+			`Diff preview: ${diffCollapsedLimit() ?? "stock (24 write / 32 edit)"} collapsed lines`,
+			`  /cc-tools diff <1-150> | stock | status`,
 		].join("\n"), "info");
 	};
 	pi.registerCommand("cc-tools", {
@@ -6364,7 +6377,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (first === "diff") {
 				const second = parts[1] ?? "";
-				const opts = ["10", "24", "32", "reset", "status"];
+				const opts = ["stock", "10", "24", "32", "status"];
 				return opts
 					.filter((o) => o.startsWith(second))
 					.map((o) => ({ value: `diff ${o}`, label: o, description: "Collapsed diff preview cap (lines)" }));
@@ -6452,17 +6465,17 @@ export default function (pi: ExtensionAPI) {
 					notifyToolStatus(ctx);
 					return;
 				}
-				if (arg === "reset") {
+				if (arg === "reset" || arg === "stock") {
 					writeSettingsKey("diffCollapsedLines", undefined);
 					if (ctx.hasUI) {
 						ctx.ui.setToolsExpanded?.(ctx.ui.getToolsExpanded?.());
-						ctx.ui.notify(`Diff preview → ${diffCollapsedLimit()} collapsed lines (default)`, "info");
+						ctx.ui.notify("Diff preview → stock (24 write / 32 edit)", "info");
 					}
 					return;
 				}
 				const n = Number.parseInt(arg, 10);
 				if (!Number.isFinite(n) || n <= 0 || n > 150) {
-					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-tools diff <1-150> | reset | status", "error");
+					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-tools diff <1-150> | stock | status", "error");
 					return;
 				}
 				writeSettingsKey("diffCollapsedLines", n);
@@ -7042,12 +7055,12 @@ export default function (pi: ExtensionAPI) {
 			}
 			const d = (result as any).details;
 			if (d?._type === "diff") {
-				const previewLines = ctx.expanded ? MAX_RENDER_LINES : diffCollapsedLimit();
+				const previewLines = ctx.expanded ? MAX_RENDER_LINES : (diffCollapsedLimit() ?? 24);
 				const hunks = d.diff?.lines?.filter((l: any) => l.type === "sep").length + (d.diff?.lines?.length ? 1 : 0);
 				const diffWidth = branchDiffWidth();
 				const mode = shouldUseSplit(d.diff, diffWidth, previewLines) ? "split" : "unified";
 				const richSummary = diffSummaryWithMeta(d.diff.added, d.diff.removed, hunks, mode);
-				const key = `wd:${diffWidth}:${d.summary}:${d.diff?.lines?.length ?? 0}:${d.language ?? ""}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit()}`;
+				const key = `wd:${diffWidth}:${d.summary}:${d.diff?.lines?.length ?? 0}:${d.language ?? ""}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 				if (ctx.state._wdk !== key) {
 					ctx.state._wdk = key;
 					ctx.state._wdt = withFinalBranchBlock(`${richSummary}\n${theme.fg("muted", "rendering diff…")}`, theme);
@@ -7072,9 +7085,9 @@ export default function (pi: ExtensionAPI) {
 				const lineTotal = typeof d.lines === "number" ? d.lines : lineCount(content);
 				const contentHash = hashText(content);
 				const richSummary = diffSummaryWithMeta(lineTotal, 0, 0, "new file");
-				const previewLines = ctx.expanded ? MAX_RENDER_LINES : diffCollapsedLimit();
+				const previewLines = ctx.expanded ? MAX_RENDER_LINES : (diffCollapsedLimit() ?? 24);
 				const diffWidth = branchDiffWidth();
-				const pk = `nf:${d.filePath}:${contentHash}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit()}`;
+				const pk = `nf:${d.filePath}:${contentHash}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 				if (ctx.state._nfk !== pk) {
 					ctx.state._nfk = pk;
 					ctx.state._nft = withFinalBranchBlock(`${richSummary}\n${renderNewFileLines(content, previewLines, diffWidth)}`, theme);
@@ -7135,7 +7148,7 @@ export default function (pi: ExtensionAPI) {
 			const hdr = toolHeader("Edit", summary, theme, ` ${toolStatusDot(ctx, theme)}`, liveLineCountTrailing(ctx, theme));
 			if (!(ctx.argsComplete && operations.length > 0)) return makeText(ctx.lastComponent, hdr);
 			const diffWidth = branchDiffWidth();
-			const key = `edit:${fp}:${hashText(operations.map((edit) => `${edit.oldText}\u0000${edit.newText}`).join("\u0001"))}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit()}`;
+			const key = `edit:${fp}:${hashText(operations.map((edit) => `${edit.oldText}\u0000${edit.newText}`).join("\u0001"))}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 			const { diffs: fallbackDiffs, summary: editSummary } = getCachedEditOperationSummary(ctx, key, operations);
 			if (ctx.state._pk !== key) {
 				ctx.state._pk = key;

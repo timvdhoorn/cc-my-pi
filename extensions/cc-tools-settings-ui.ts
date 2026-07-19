@@ -25,7 +25,7 @@ export interface CcToolsUiSnapshot {
 	branchPreset: BranchPreset;
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
-	diffCollapsedLines: number;
+	diffCollapsedLines: number | "stock";
 }
 
 export interface CcToolsSettingsController {
@@ -86,9 +86,12 @@ const SETTING_ORDER: Array<{
 	{
 		id: "diffCollapsedLines",
 		label: "Diff preview",
-		values: ["10", "24", "32", "60"],
+		values: ["stock", "10", "24", "32", "60"],
 		current: (s) => String(s.diffCollapsedLines),
-		describe: (s) => `Collapsed diffs show at most ${s.diffCollapsedLines} lines`,
+		describe: (s) =>
+			s.diffCollapsedLines === "stock"
+				? "Collapsed diffs use stock caps (24 write / 32 edit)"
+				: `Collapsed diffs show at most ${s.diffCollapsedLines} lines`,
 	},
 	{
 		id: "imagePasterEnabled",
