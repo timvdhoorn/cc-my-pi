@@ -7,6 +7,14 @@
 
 ### Added
 
+- **Animated startup header** — vendored from
+  [`pi-claude-code-tui`](https://github.com/Phoobobo/pi-claude-code-tui) (MIT,
+  Phoobobo; header only, no editor box): a boxed Pi-logo header with an
+  animated mark, model/effort/cwd, and a slash-command tips column. Toggled
+  with `claudeHeaderEnabled` (default `true`, `/reload` to change); off falls
+  back to the one-line `✻ Welcome to Pi` header. Don't install
+  `npm:pi-claude-code-tui` alongside — the header is already bundled.
+
 - **Optional companion packages** — six MIT-licensed standalone packages
   (`pi-context-view`, `pi-mcp-adapter`, `pi-subagents`, `pi-dynamic-workflows`,
   `pi-tasks`, `rpiv-ask-user-question`) now appear as rows in both the

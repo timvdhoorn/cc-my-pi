@@ -34,6 +34,7 @@ export interface CcToolsUiSnapshot {
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
 	diffCollapsedLines: number | "stock";
+	claudeHeaderEnabled: boolean;
 	statuslineEnabled: boolean;
 	statuslineCtxStyle: "claude" | "plain";
 	statuslineShowWorktree: boolean;
@@ -252,6 +253,16 @@ export const SETTING_ORDER: Array<{
 				: s.bashOutputMode === "preview"
 					? "Short bash preview (one result line)"
 					: "Bash collapsed to exit/status only",
+	},
+	{
+		id: "claudeHeaderEnabled",
+		label: "Startup header",
+		values: ["on", "off"],
+		current: (s) => (s.claudeHeaderEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.claudeHeaderEnabled
+				? "Animated boxed Pi-logo startup header with command tips; off requires /reload"
+				: "Simple one-line welcome header (statusline module) (/reload required)",
 	},
 	{
 		id: "statuslineEnabled",

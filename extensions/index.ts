@@ -63,6 +63,7 @@ import registerStatuslineModelInfo from "./statusline/model-info/index.js";
 import registerStatuslineUi from "./statusline/ui-customization/index.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
 import { registerBundledQueueSteer } from "./queue-steer/index.js";
+import { registerClaudeHeader, type HeaderHooks } from "./claude-header/index.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -166,6 +167,8 @@ interface SettingsFile {
 	copyAlwaysFull?: boolean;
 	/** Marker: guided first-run setup wizard has run once (auto-start suppressed after). */
 	ccMyPiSetupDone?: boolean;
+	/** Animated startup header (vendored pi-claude-code-tui, header only). Defaults to true; reload required. */
+	claudeHeaderEnabled?: boolean;
 	/** Statusline module (model/ctx/git/MCP footer). Defaults to true; reload required to change. */
 	statuslineEnabled?: boolean;
 	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
@@ -6190,11 +6193,18 @@ export default function (pi: ExtensionAPI) {
 		copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
 		setCopyAlwaysFull: (v) => writeSettingsKey("copyAlwaysFull", v),
 	});
+	const claudeHeaderEnabled = readSettings().claudeHeaderEnabled !== false;
+	let statuslineHeaderHooks: HeaderHooks["onTui"];
 	if (readSettings().statuslineEnabled !== false) {
 		registerStatuslineModelInfo(pi);
 		registerStatuslineGitInfo(pi);
-		registerStatuslineUi(pi);
+		// skipHeader hands the header over to the vendored claude-header module;
+		// the statusline still runs its header side effects via the onTui hook.
+		statuslineHeaderHooks = registerStatuslineUi(pi, { skipHeader: claudeHeaderEnabled }).onTui;
 	}
+	// Register AFTER the statusline block so the header's setTimeout(0) apply
+	// wins the setHeader race deterministically.
+	registerClaudeHeader(pi, claudeHeaderEnabled, { onTui: statuslineHeaderHooks });
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
@@ -6264,6 +6274,7 @@ export default function (pi: ExtensionAPI) {
 			readOutputMode,
 			bashOutputMode,
 			diffCollapsedLines: diffCollapsedLimit() ?? "stock",
+			claudeHeaderEnabled: settings.claudeHeaderEnabled !== false,
 			statuslineEnabled: settings.statuslineEnabled !== false,
 			statuslineCtxStyle: settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
 			statuslineShowWorktree: settings.statuslineShowWorktree !== false,
@@ -6378,6 +6389,11 @@ export default function (pi: ExtensionAPI) {
 				if (!Number.isFinite(n) || n <= 0 || n > 150) return;
 				writeSettingsKey("diffCollapsedLines", n);
 				if (ctx.hasUI) ctx.ui.setToolsExpanded?.(ctx.ui.getToolsExpanded?.());
+				break;
+			}
+			case "claudeHeaderEnabled": {
+				writeSettingsKey("claudeHeaderEnabled", value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply header change", "info");
 				break;
 			}
 			case "statuslineEnabled": {

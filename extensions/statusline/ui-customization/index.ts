@@ -19,6 +19,7 @@ import {
   hyperlink,
   truncateToWidth,
   visibleWidth,
+  type TUI,
 } from "@earendil-works/pi-tui";
 import {
   emptyGitInfoState,
@@ -185,7 +186,10 @@ function formatDirectory(cwd: string) {
   return cwd;
 }
 
-export default function uiCustomization(pi: ExtensionAPI) {
+export default function uiCustomization(
+  pi: ExtensionAPI,
+  opts?: { skipHeader?: boolean },
+) {
   let title = "pi";
   let modelInfo = emptyModelInfoState();
   let gitInfo = emptyGitInfoState();
@@ -218,22 +222,32 @@ export default function uiCustomization(pi: ExtensionAPI) {
     }
   }
 
+  // Side effects the header factory owns (capture the tui, wire requestRender,
+  // schedule the [Themes] section removal). Exported as the `onTui` hook so the
+  // vendored claude-header module can run them from its own setHeader factory
+  // when it takes over the header (opts.skipHeader).
+  function applyHeaderHooks(tui: TUI) {
+    activeTui = tui;
+    requestRender = () => tui.requestRender();
+    scheduleThemeRemoval(tui);
+  }
+
   function install(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
 
-    ctx.ui.setHeader((tui) => {
-      activeTui = tui;
-      requestRender = () => tui.requestRender();
-      scheduleThemeRemoval(tui);
+    if (!opts?.skipHeader) {
+      ctx.ui.setHeader((tui) => {
+        applyHeaderHooks(tui);
 
-      return {
-        render(width: number) {
-          const line = `  ${CLAUDE_ORANGE}✻ Welcome to Pi${RESET} ${DIM_GRAY}${title}${RESET}`;
-          return ["", truncateToWidth(line, width), ""];
-        },
-        invalidate() {},
-      };
-    });
+        return {
+          render(width: number) {
+            const line = `  ${CLAUDE_ORANGE}✻ Welcome to Pi${RESET} ${DIM_GRAY}${title}${RESET}`;
+            return ["", truncateToWidth(line, width), ""];
+          },
+          invalidate() {},
+        };
+      });
+    }
 
     ctx.ui.setFooter((tui, theme, footerData: ReadonlyFooterDataProvider) => {
       requestRender = () => tui.requestRender();
@@ -378,4 +392,6 @@ export default function uiCustomization(pi: ExtensionAPI) {
       ctx.ui.setFooter(undefined);
     }
   });
+
+  return { onTui: applyHeaderHooks };
 }

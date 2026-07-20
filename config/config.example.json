@@ -24,5 +24,6 @@
   "sessionCommandsEnabled": true,
   "copyCommandEnabled": true,
   "spinnerEnabled": true,
+  "claudeHeaderEnabled": true,
   "statuslineEnabled": true
 }
