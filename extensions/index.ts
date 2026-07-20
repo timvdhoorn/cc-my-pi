@@ -53,7 +53,7 @@ import {
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
-import { registerBundledQueueSteer } from "./queue-steer/index.js";
+import { ESC_CONTINUE_ABORT_KEY, registerBundledQueueSteer } from "./queue-steer/index.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -2313,8 +2313,24 @@ function patchAssistantMessages(): void {
 		proto.render = function patchedAssistantMessageRender(width: number) {
 			const cached = messageRenderCacheHit(this, width);
 			if (cached) return cached;
-			const lines = originalRender.call(this, width);
+			let lines = originalRender.call(this, width);
 			if (!Array.isArray(lines) || lines.length === 0) return lines;
+			// Esc abort-and-continue (queue-steer): the queued message sends right
+			// after this abort, so the red "Operation aborted" line only confuses.
+			// Real user cancels are not marked and keep the message.
+			if ((this as any).lastMessage?.[ESC_CONTINUE_ABORT_KEY]) {
+				const filtered = lines.filter(
+					(line: string) => line.replace(/\x1b\[[0-9;]*m/g, "").trim() !== "Operation aborted",
+				);
+				if (filtered.length < lines.length) {
+					// Also drop the spacer that preceded the removed line when it
+					// leaves a trailing blank.
+					while (filtered.length > 0 && filtered[filtered.length - 1]!.trim() === "") {
+						filtered.pop();
+					}
+					lines = filtered;
+				}
+			}
 			if ((this as any).hasToolCalls) {
 				// Tool-call messages skip copy-zone processing, but still benefit from
 				// caching the rendered output to avoid re-rendering stable children.
