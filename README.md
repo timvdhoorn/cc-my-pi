@@ -30,7 +30,7 @@ To uninstall, remove the path from `packages` and `/reload`.
 ```text
 /cc-my-pi                 # open interactive settings panel (live ASCII preview)
 /cc-my-pi setup           # guided walkthrough of every setting (auto-runs once on first load, re-runnable any time)
-/cc-my-pi status          # text dump of style, grouping, bullets, branch
+/cc-my-pi status          # text dump of style, grouping, branch, diff
 ```
 
 Every subcommand hangs off the single root command `/cc-my-pi`:
@@ -47,7 +47,7 @@ same file.
 
 | Module | What you get | Setting | Default | Applies |
 |---|---|---|---|---|
-| Core tool rendering | Compact `read`/`bash`/`grep`/`find`/`ls`/`edit`/`write` rows, Claude-style OpenAI/`apply_patch` tools, diff stat bar, thinking labels, MCP-aware rendering | — (base module, always on while loaded) | on | — |
+| Core tool rendering | Compact `read`/`bash`/`grep`/`find`/`ls`/`edit`/`write` rows, Claude-style OpenAI/`apply_patch` tools, minimal diff chrome, thinking labels, MCP-aware rendering | — (base module, always on while loaded) | on | — |
 | Spinner | Claude-style spinner verb + status text (falls back to Pi's stock spinner when off) | `spinnerEnabled` | `true` | reload |
 | Image paster | Clipboard images and pasted image paths become first-class attachments (bundled `pi-paster`) | `imagePasterEnabled` | `true` | reload |
 | Esc steer | Esc while the agent runs aborts and auto-continues whatever was queued | `escSteerEnabled` | `true` | live |
@@ -124,8 +124,7 @@ not repeated here):
   "bashCollapsedLines": 10,
   "liveToolPreviewLines": 5,
   "diffCollapsedLines": 24,
-  "diffTheme": "github-dark",
-  "assistantListBulletStyle": "default"
+  "diffTheme": "github-dark"
 }
 ```
 
@@ -149,11 +148,8 @@ not repeated here):
 | `bashCollapsedLines` | `10` | Lines for collapsed bash output |
 | `liveToolPreviewLines` | `5` | Lines shown in the collapsed live preview |
 | `diffCollapsedLines` | `24` | Diff lines before collapsing |
-| `assistantListBulletStyle` | `default` | Assistant unordered list markers: Pi theme `default` or forced `dash` (`-`) |
 
-`assistantListBulletStyle` only affects **assistant Markdown unordered
-lists** (the rows that this package restyles). Thinking blocks and user
-messages are unchanged.
+Assistant Markdown unordered lists always render with `-` markers (Claude Code parity; not configurable).
 
 ### Tool background modes
 
@@ -168,13 +164,10 @@ messages are unchanged.
 /cc-my-pi group toggle    # toggle grouped adjacent/concurrent tool calls
 /cc-my-pi group off       # disable grouping (also ungroups current grouped rows)
 /cc-my-pi detail toggle   # same mode as Ctrl+Shift+O
-/cc-my-pi bullets default # use Pi theme's native list marker
-/cc-my-pi bullets dash    # force plain markdown "-" markers
-/cc-my-pi bullets toggle  # flip default ↔ dash
 ```
 
-The settings panel lists style, grouping, extra detail, branch color, list
-bullets, image paster, Esc continues queue, double-Esc clears draft,
+The settings panel lists style, grouping, extra detail, branch color,
+image paster, Esc continues queue, double-Esc clears draft,
 theme-adaptive, spinner verb/status colors, live preview, and read/bash
 output modes. Most changes apply immediately; changing image paster or the
 spinner module requires `/reload`. The preview block under the list shows a
@@ -187,7 +180,7 @@ When `themeAdaptive` is `true` (default), the following colors are derived from 
 | Element | Derived from |
 | --------- | -------------- |
 | User box, tool rules, code fences | `dim` → `muted` → `borderMuted` → `thinkingText` |
-| Branch connectors (`├`, `└`, `│`) | **fixed rgb(72)** by default (theme-independent); `/cc-my-pi branch theme` to follow pi theme |
+| Branch connectors (`├`, `└`, `│`) | **fixed rgb(128)** by default (theme-independent); `/cc-my-pi branch theme` to follow pi theme |
 | "✻ Turn took Ns" line (final message only, with session total + turn count) | `muted` |
 | Thinking-block text and `∴` marker (marker hidden when thinking is collapsed) | `muted` |
 | Diff add/remove accents | `toolDiffAdded` / `toolDiffRemoved` |
