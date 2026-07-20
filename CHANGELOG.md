@@ -15,6 +15,8 @@
 - **`spinnerEnabled` module toggle** — the Claude-style spinner can now be
   disabled (`/cc-my-pi setup` or the settings panel `Spinner` row), falling back
   to Pi's stock spinner. Reload required; default on.
+- **README** rewritten: install guide, modules-optional matrix with
+  per-module settings examples, guided-setup docs.
 
 ## 1.1.0 — 2026-07-20
 

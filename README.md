@@ -2,41 +2,113 @@
 
 > Personal Pi UI bundle — Claude Code-inspired tool rendering, spinner, themes, and esc/queue steering. Fork of [pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`), heavily adapted. See [Credits & provenance](#credits--provenance).
 
-Loaded by local path from `~/.pi/agent/settings.json` (not published to npm):
+Every module below is **optional and individually toggleable** — turn any of
+them off in settings and the rest keeps working. Core tool rendering (the
+Claude-style diffs, status dots, and borders) is the base module: it's on
+whenever the package is loaded, and `toolBackground: "default"` gets you
+closest to stock Pi.
 
-```json
-"packages": ["/path/to/Pi-config/cc-my-pi"]
+## Install
+
+1. Clone this repo (or use it in place inside `Pi-config/cc-my-pi`).
+2. Add its absolute path to the `packages` array in
+   `~/.pi/agent/settings.json` (not published to npm):
+
+   ```json
+   {
+     "packages": ["/path/to/Pi-config/cc-my-pi"]
+   }
+   ```
+3. Run `/reload` (or restart Pi) to load it.
+4. First load auto-starts the guided setup wizard (`/cc-my-pi setup`) — walk
+   through it once, or press Esc to skip and configure later.
+
+To uninstall, remove the path from `packages` and `/reload`.
+
+## Quick start
+
+```text
+/cc-my-pi                 # open interactive settings panel (live ASCII preview)
+/cc-my-pi setup           # guided walkthrough of every setting (auto-runs once on first load, re-runnable any time)
+/cc-my-pi status          # text dump of style, grouping, bullets, branch
 ```
 
-Claude Code inspired tool rendering for Pi — Shiki-powered diffs, status dots, branch connectors, file icons, and configurable output modes.
+Every subcommand hangs off the single root command `/cc-my-pi`:
 
-## Features
+```text
+/cc-my-pi ui|settings|status|outlines|transparent|default|group|detail|branch|diff|theme|spinner|setup
+```
 
-- **Compact built-in tool rendering** for `read`, `bash`, `grep`, `find`, `ls`, `edit`, and `write`
-- **Claude-style OpenAI tool rendering** for `apply_patch` plus common Pi/OpenAI-style tools like `webfetch`, `web_search`, `fetch_content`, task tools, and context tools
-- **`apply_patch` diff previews** that render parsed file patches in the call phase, similar to `edit`/`write`
-- **Adaptive edit/write diffs** with split or unified layouts, syntax highlighting, and inline word-level emphasis
-- **Diff stat bar** with colored add/remove summary and hunk metadata
-- **Progressive collapsed diff hints** that shorten on narrow terminals
-- **Thinking labels** during streaming and final messages, with context sanitization
-- **MCP-aware rendering** with hidden, summary, and preview modes
-- **Configurable output modes** for read, search, bash, and MCP results
-- **Live running previews** that show a few output lines for active tool calls (latest lines for bash), persisting until the next tool/text activity
-- **Subagent completion notifications** restyled to match the same Claude-style tool rows
-- **RTK rewrite integration** that folds rewrite notices into the bash tool row with a muted `(RTK)` badge and expanded-only rewrite details
-- **Built-in image paster** — clipboard images and pasted image paths become first-class attachments through bundled `pi-paster` (toggle with `imagePasterEnabled`)
-- **Bundled Esc behaviors** — Claude Code's two Escape reflexes, both on by default and toggleable live from `/cc-my-pi`: Esc while the agent runs aborts and auto-continues whatever was queued (`escSteerEnabled`), and double-Esc on a non-empty idle draft clears it (`doubleEscClearEnabled`)
-- **Transparent tool backgrounds** in `transparent` or `border` mode
-- **Theme-adaptive palette** — borders, branch connectors, dim text, spinner accent, and diff backgrounds automatically follow the active pi theme (set `themeAdaptive: false` to keep the fixed Claude-style palette)
-- **Light Ghostty-sync themes** — edit/write diffs use `github-light` highlighting and light-tinted diff rows; tool pending dots use softer chrome colors
-- **Transparent edit/write diffs** with universal red/green diff colors
-- **Grouped consecutive tool calls** with a compact status header and per-tool glance rows (set `groupToolCalls: false` to disable)
-- **Extra detail toggle** with `Ctrl+Shift+O`, increasing expanded preview caps without making the default view heavy
-- **Global border patch** for all tool rows, including unknown/custom tools
+## Modules
 
-## Configuration
+All settings live in `~/.pi/settings.json` (or `./.pi/settings.json` for a
+project override) as plain JSON keys — the panel and wizard just write to the
+same file.
 
-Set in `.pi/settings.json` or `~/.pi/settings.json`:
+| Module | What you get | Setting | Default | Applies |
+|---|---|---|---|---|
+| Core tool rendering | Compact `read`/`bash`/`grep`/`find`/`ls`/`edit`/`write` rows, Claude-style OpenAI/`apply_patch` tools, diff stat bar, thinking labels, MCP-aware rendering | — (base module, always on while loaded) | on | — |
+| Spinner | Claude-style spinner verb + status text (falls back to Pi's stock spinner when off) | `spinnerEnabled` | `true` | reload |
+| Image paster | Clipboard images and pasted image paths become first-class attachments (bundled `pi-paster`) | `imagePasterEnabled` | `true` | reload |
+| Esc steer | Esc while the agent runs aborts and auto-continues whatever was queued | `escSteerEnabled` | `true` | live |
+| Double-Esc clear | Double-Esc (within 800ms) on a non-empty idle draft clears it | `doubleEscClearEnabled` | `true` | live |
+| Queue steer | Vendored `pi-queue-steer` — visible steering/follow-up queue | `queueSteerEnabled` | `true` | live |
+| Theme-adaptive palette | Borders, branch connectors, dim text, spinner accent, and diff backgrounds follow the active pi theme | `themeAdaptive` | `true` | live |
+| Grouped tool calls | Adjacent/concurrent tool calls collapse under a compact status header | `groupToolCalls` | `true` | live |
+| Live tool preview | A few output lines shown for still-running tool calls | `liveToolPreview` | `true` | live |
+| Statusline | Steers the separate statusline package (context gauge style, worktree segment); name-shared, no import, 5s TTL | `statuslineCtxStyle`, `statuslineShowWorktree` | `"claude"`, `true` | live (≤5s) |
+
+One example per module — set just the key(s) you want to change:
+
+```json
+{ "spinnerEnabled": false }
+```
+Disables the Claude-style spinner; Pi's stock spinner takes over after `/reload`.
+
+```json
+{ "imagePasterEnabled": false }
+```
+Clipboard/pasted images are no longer captured as attachments; reload to apply.
+
+```json
+{ "escSteerEnabled": false }
+```
+Esc goes back to only pausing the run — no auto-continue of queued follow-ups.
+
+```json
+{ "doubleEscClearEnabled": false }
+```
+Double-Esc on a non-empty draft no longer clears it.
+
+```json
+{ "queueSteerEnabled": false }
+```
+Removes the visible steering/follow-up queue; Pi's native queue still works.
+
+```json
+{ "themeAdaptive": false }
+```
+Keeps the fixed Claude-style palette regardless of the active pi theme.
+
+```json
+{ "groupToolCalls": false }
+```
+Adjacent tool calls render as separate rows instead of a grouped block.
+
+```json
+{ "liveToolPreview": false }
+```
+Still-running tool calls no longer show a live output preview.
+
+```json
+{ "statuslineCtxStyle": "plain", "statuslineShowWorktree": false }
+```
+Statusline switches to a plain context style and drops the `wt <name>` worktree segment.
+
+## Configuration reference
+
+Full settings block (see [Modules](#modules) above for module toggles —
+not repeated here):
 
 ```json
 {
@@ -48,22 +120,67 @@ Set in `.pi/settings.json` or `~/.pi/settings.json`:
   "expandedPreviewMaxLines": 4000,
   "extraExpandedPreviewMaxLines": 12000,
   "extraToolOutputExpanded": false,
-  "groupToolCalls": true,
   "bashOutputMode": "opencode",
   "bashCollapsedLines": 10,
-  "liveToolPreview": true,
   "liveToolPreviewLines": 5,
   "diffCollapsedLines": 24,
-  "themeAdaptive": true,
   "diffTheme": "github-dark",
-  "assistantListBulletStyle": "default",
-  "imagePasterEnabled": true,
-  "escSteerEnabled": true,
-  "doubleEscClearEnabled": true
+  "assistantListBulletStyle": "default"
 }
 ```
 
-### Theme integration
+### Output modes
+
+| Setting | Values | Default |
+| --------- | -------- | --------- |
+| `readOutputMode` | `hidden`, `summary`, `preview` | `preview` |
+| `searchOutputMode` | `hidden`, `count`, `preview` | `preview` |
+| `mcpOutputMode` | `hidden`, `summary`, `preview` | `preview` |
+| `bashOutputMode` | `opencode`, `summary`, `preview` | `opencode` |
+
+### Display settings
+
+| Setting | Default | Description |
+| --------- | --------- | ------------- |
+| `previewLines` | `8` | Lines shown in collapsed preview mode |
+| `expandedPreviewMaxLines` | `4000` | Max lines when expanded with Ctrl+O |
+| `extraExpandedPreviewMaxLines` | `12000` | Max lines after Ctrl+Shift+O extra-detail mode |
+| `extraToolOutputExpanded` | `false` | Start with Ctrl+Shift+O extra-detail mode enabled |
+| `bashCollapsedLines` | `10` | Lines for collapsed bash output |
+| `liveToolPreviewLines` | `5` | Lines shown in the collapsed live preview |
+| `diffCollapsedLines` | `24` | Diff lines before collapsing |
+| `assistantListBulletStyle` | `default` | Assistant unordered list markers: Pi theme `default` or forced `dash` (`-`) |
+
+`assistantListBulletStyle` only affects **assistant Markdown unordered
+lists** (the rows that this package restyles). Thinking blocks and user
+messages are unchanged.
+
+### Tool background modes
+
+| Value | Behavior |
+| ------- | ---------- |
+| `default` | Standard Pi tool backgrounds |
+| `transparent` | Transparent tool backgrounds |
+| `border` | Transparent backgrounds with top/bottom border lines |
+
+```text
+/cc-my-pi outlines        # tool style: outlines, transparent, or default
+/cc-my-pi group toggle    # toggle grouped adjacent/concurrent tool calls
+/cc-my-pi group off       # disable grouping (also ungroups current grouped rows)
+/cc-my-pi detail toggle   # same mode as Ctrl+Shift+O
+/cc-my-pi bullets default # use Pi theme's native list marker
+/cc-my-pi bullets dash    # force plain markdown "-" markers
+/cc-my-pi bullets toggle  # flip default ↔ dash
+```
+
+The settings panel lists style, grouping, extra detail, branch color, list
+bullets, image paster, Esc continues queue, double-Esc clears draft,
+theme-adaptive, spinner verb/status colors, live preview, and read/bash
+output modes. Most changes apply immediately; changing image paster or the
+spinner module requires `/reload`. The preview block under the list shows a
+mock tool tree for the current combination.
+
+## Theme integration
 
 When `themeAdaptive` is `true` (default), the following colors are derived from the active pi theme on every render and re-derived whenever the theme changes:
 
@@ -84,7 +201,7 @@ Set `themeAdaptive: false` to keep the original fixed Claude-style palette regar
 
 On `/resume`, `/new`, or `/fork`, tool chrome is rebound from the **current** pi theme (no coupling to Ghostty or other theme extensions). If you use Ghostty sync, listing it **above** this extension in `settings.json` is recommended so `setTheme` runs before chrome rebind.
 
-#### Toggle at runtime with `/cc-my-pi theme`
+### Toggle at runtime with `/cc-my-pi theme`
 
 ```text
 /cc-my-pi theme           # show current setting + theme name
@@ -96,7 +213,7 @@ On `/resume`, `/new`, or `/fork`, tool chrome is rebound from the **current** pi
 
 The selection is persisted to `~/.pi/settings.json` and applied to the next rendered tool row. No restart required.
 
-#### Repaint the spinner with `/cc-my-pi spinner`
+### Repaint the spinner with `/cc-my-pi spinner`
 
 The spinner glyph itself is still colored by pi's loader using `accent`, while the verb text (e.g. `Cooking…`) follows `borderAccent` by default so it stays lively without being the exact same color as the glyph. The status suffix (e.g. `(thinking · ↓ 10 tokens · 2s)`) follows `muted`. Use `/cc-my-pi spinner` to bind either text element to any other theme color key:
 
@@ -117,34 +234,6 @@ The selection is persisted as `spinnerVerbColor` / `spinnerStatusColor` in `~/.p
   "spinnerGlyphColor": "#d77757"
 }
 ```
-
-### Tool background modes
-
-| Value | Behavior |
-| ------- | ---------- |
-| `default` | Standard Pi tool backgrounds |
-| `transparent` | Transparent tool backgrounds |
-| `border` | Transparent backgrounds with top/bottom border lines |
-
-Use `/cc-my-pi` to control tool UI at runtime:
-
-```text
-/cc-my-pi                 # open interactive settings panel (live ASCII preview)
-/cc-my-pi setup           # guided walkthrough of every setting (auto-runs once on first load)
-/cc-my-pi ui              # same as bare /cc-my-pi
-/cc-my-pi status          # text dump of style, grouping, bullets, branch
-/cc-my-pi outlines        # tool style: outlines, transparent, or default
-/cc-my-pi group toggle    # toggle grouped adjacent/concurrent tool calls
-/cc-my-pi group off       # disable grouping (also ungroups current grouped rows)
-/cc-my-pi detail toggle   # same mode as Ctrl+Shift+O
-/cc-my-pi bullets default # use Pi theme's native list marker
-/cc-my-pi bullets dash    # force plain markdown "-" markers
-/cc-my-pi bullets toggle  # flip default ↔ dash
-```
-
-The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, Esc continues queue, double-Esc clears draft, theme-adaptive, spinner verb/status colors, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
-
-`assistantListBulletStyle` only affects **assistant Markdown unordered lists** (the rows that this package restyles). Thinking blocks and user messages are unchanged.
 
 ### Bundled Esc behaviors
 
@@ -174,31 +263,6 @@ esc-steer dedups automatically via the shared feature marker; double-esc-clear
 cannot detect the standalone package, so a leftover install would double-wrap
 (harmless — the inner clear empties the draft and the outer sees nothing to do —
 but removing it is cleaner).
-
-### Output modes
-
-| Setting | Values | Default |
-| --------- | -------- | --------- |
-| `readOutputMode` | `hidden`, `summary`, `preview` | `preview` |
-| `searchOutputMode` | `hidden`, `count`, `preview` | `preview` |
-| `mcpOutputMode` | `hidden`, `summary`, `preview` | `preview` |
-| `bashOutputMode` | `opencode`, `summary`, `preview` | `opencode` |
-
-### Display settings
-
-| Setting | Default | Description |
-| --------- | --------- | ------------- |
-| `previewLines` | `8` | Lines shown in collapsed preview mode |
-| `expandedPreviewMaxLines` | `4000` | Max lines when expanded with Ctrl+O |
-| `extraExpandedPreviewMaxLines` | `12000` | Max lines after Ctrl+Shift+O extra-detail mode |
-| `extraToolOutputExpanded` | `false` | Start with Ctrl+Shift+O extra-detail mode enabled |
-| `groupToolCalls` | `true` | Group adjacent/concurrent tool calls under a compact status header |
-| `bashCollapsedLines` | `10` | Lines for collapsed bash output |
-| `liveToolPreview` | `true` | Show a small live output preview while tools are still running |
-| `liveToolPreviewLines` | `5` | Lines shown in the collapsed live preview |
-| `diffCollapsedLines` | `24` | Diff lines before collapsing |
-| `assistantListBulletStyle` | `default` | Assistant unordered list markers: Pi theme `default` or forced `dash` (`-`) |
-| `imagePasterEnabled` | `true` | Bundle clipboard-image and pasted-image-path attachments; reload after changing |
 
 ## Notes
 
