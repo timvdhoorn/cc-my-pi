@@ -99,6 +99,11 @@ export function registerBundledEscSteer(
 				return candidate.isShowingAutocomplete?.() ?? false;
 			};
 
+			const draftIsEmpty = (): boolean => {
+				const candidate = editor as typeof editor & { getText?: () => string };
+				return (candidate.getText?.() ?? "").trim().length === 0;
+			};
+
 			injectSubmit = () => {
 				// Default Enter / return. CustomEditor + pi-queue-steer match via
 				// keybindings.matches(data, "tui.input.submit") — "\r" is the usual bind.
@@ -121,7 +126,15 @@ export function registerBundledEscSteer(
 						? keybindings.matches(data, "app.interrupt")
 						: data === "\x1b";
 
-				if (isInterrupt && isEnabled() && !isShowingAutocomplete() && !ctx.isIdle()) {
+				if (
+					isInterrupt &&
+					isEnabled() &&
+					!isShowingAutocomplete() &&
+					!ctx.isIdle() &&
+					// Only an empty chatbox may abort-and-continue; a typed draft
+					// belongs to double-esc-clear and must never be auto-submitted.
+					draftIsEmpty()
+				) {
 					// Pass through so pi-queue-steer can pause, or native Esc can
 					// restore native queues into the editor — then continue on settle.
 					armContinueAfterAbort();

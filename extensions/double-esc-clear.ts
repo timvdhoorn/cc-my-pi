@@ -6,12 +6,17 @@
  * no-op while idle. This extension makes Escape → Escape (within 800ms) clear
  * that draft instead.
  *
+ * A non-empty plain draft owns Esc even while the agent is streaming
+ * (decided 2026-07-20): the draft must never be lost to an accidental
+ * abort-and-autosubmit, so busy Esc on such a draft is swallowed here
+ * rather than falling through to the app's abort handler.
+ *
  * Must not steal these built-in Escape paths:
- * - streaming abort
  * - bash-running abort
  * - bash-mode (`!…`) single-Esc clear/exit
  * - autocomplete cancel
  * - empty / whitespace-only double-Esc (`doubleEscapeAction`)
+ * - streaming abort, when the draft is empty/bash-mode
  *
  * Vendored from @thisux/pi-double-esc-clear v1.0.3 (MIT, author Sanju
  * <https://sanju.sh/>). Exposed as a register function gated by a live
@@ -121,24 +126,25 @@ export function registerBundledDoubleEscClear(
 					isEscape &&
 					isEnabled() &&
 					!editor.isShowingAutocomplete() &&
-					// Streaming / non-idle abort stays with the app.
-					ctx.isIdle() &&
 					isClearableDraft(editor.getText())
 				) {
 					const now = Date.now();
 					if (now - lastEscapeTime < DOUBLE_ESC_MS) {
-						// Second Esc on a plain draft → clear. Built-in onEscape is a
-						// no-op for this case, so we do not fall through.
+						// Second Esc on a plain draft → clear. Never falls through.
 						editor.setText("");
 						lastEscapeTime = 0;
 						hideHint();
 						return;
 					}
-					// First Esc: arm timer, then fall through so bash-running /
-					// other app Escape handlers still run when applicable.
 					lastEscapeTime = now;
 					showHint(ctx);
-					originalHandleInput(data);
+					if (ctx.isIdle()) {
+						// Idle: fall through so bash-running / other app Escape
+						// handlers still run when applicable.
+						originalHandleInput(data);
+					}
+					// Busy: swallow — falling through would abort the run; the
+					// draft must never cost the user their running turn.
 					return;
 				}
 

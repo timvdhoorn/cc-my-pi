@@ -171,6 +171,37 @@ test("double-esc-clear: disabled gate lets Esc pass through unchanged", () => {
   assert.equal(editor.getText(), "hello");
 });
 
+test("double-esc-clear: busy: first Esc shows hint and does not clear", () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+  const { ctx, state, widgets } = makeCtx();
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  state.idle = false; // agent busy
+  editor.setText("hello");
+
+  editor.handleInput(ESC); // first Esc: shows hint, swallowed (does not abort)
+  assert.equal(editor.getText(), "hello");
+  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+});
+
+test("double-esc-clear: busy: second Esc clears the draft", () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+  const { ctx, state, widgets } = makeCtx();
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  state.idle = false; // agent busy
+  editor.setText("hello");
+
+  editor.handleInput(ESC);
+  editor.handleInput(ESC); // second Esc within window: clears
+  assert.equal(editor.getText(), "");
+  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+});
+
 test("double-esc-clear: already-stamped factory is not wrapped twice", () => {
   const { pi, handlers } = makePi();
   registerBundledDoubleEscClear(pi, () => true);
@@ -230,6 +261,56 @@ test("esc-steer: enabled gate injects a submit after settle", async () => {
   await tick();
 
   assert.deepEqual(calls, [ESC, "\r"]); // interrupt passed through, then submit injected
+});
+
+test("esc-steer: busy + typed draft: Esc is not armed, no submit after settle", async () => {
+  const { pi, handlers } = makePi();
+  registerBundledEscSteer(pi, () => true);
+
+  const calls: string[] = [];
+  const previous: any = () => ({
+    handleInput: (data: string) => calls.push(data),
+    isShowingAutocomplete: () => false,
+    getText: () => "draft",
+  });
+  const { ctx, state } = makeCtx(previous);
+
+  handlers.get("session_start")!({}, ctx);
+  const wrapped: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+
+  state.idle = false; // agent busy
+  wrapped.handleInput(ESC); // typed draft: not armed, passes through only
+  state.idle = true;
+  handlers.get("agent_settled")!({}, ctx);
+  await tick();
+  await tick();
+
+  assert.deepEqual(calls, [ESC]); // no injected "\r"
+});
+
+test("esc-steer: busy + whitespace-only draft still injects submit", async () => {
+  const { pi, handlers } = makePi();
+  registerBundledEscSteer(pi, () => true);
+
+  const calls: string[] = [];
+  const previous: any = () => ({
+    handleInput: (data: string) => calls.push(data),
+    isShowingAutocomplete: () => false,
+    getText: () => "  ",
+  });
+  const { ctx, state } = makeCtx(previous);
+
+  handlers.get("session_start")!({}, ctx);
+  const wrapped: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+
+  state.idle = false; // agent busy
+  wrapped.handleInput(ESC); // whitespace-only counts as empty: armed
+  state.idle = true;
+  handlers.get("agent_settled")!({}, ctx);
+  await tick();
+  await tick();
+
+  assert.deepEqual(calls, [ESC, "\r"]);
 });
 
 test("esc-steer: already-stamped factory is not wrapped twice", async () => {
