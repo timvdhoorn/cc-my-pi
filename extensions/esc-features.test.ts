@@ -171,6 +171,34 @@ test("double-esc-clear: disabled gate lets Esc pass through unchanged", () => {
   assert.equal(editor.getText(), "hello");
 });
 
+test("double-esc-clear: wraps a cross-realm editor (capabilities, not instanceof)", () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+
+  // Editor from ANOTHER copy of pi-coding-agent (e.g. pi-raw-paste): fully
+  // capable, but not instanceof this package's CustomEditor.
+  let text = "hello";
+  const foreign = {
+    handleInput: (_data: string) => {},
+    getText: () => text,
+    setText: (value: string) => {
+      text = value;
+    },
+    isShowingAutocomplete: () => false,
+  };
+  const previous: any = () => foreign;
+  const { ctx, widgets } = makeCtx(previous);
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  assert.equal(editor, foreign); // same instance, wrapped in place
+
+  editor.handleInput(ESC);
+  assert.ok(widgets.has("cc-tools-double-esc-hint")); // feature active
+  editor.handleInput(ESC);
+  assert.equal(text, ""); // second Esc cleared the draft
+});
+
 test("double-esc-clear: busy: first Esc shows hint and does not clear", () => {
   const { pi, handlers } = makePi();
   registerBundledDoubleEscClear(pi, () => true);

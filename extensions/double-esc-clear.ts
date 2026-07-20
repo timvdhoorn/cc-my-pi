@@ -103,11 +103,20 @@ export function registerBundledDoubleEscClear(
 		if (features.has(FEATURE)) return;
 
 		const factory = ((tui, theme, keybindings: KeybindingsManager) => {
-			const editor =
-				previous?.(tui, theme, keybindings) ??
-				new CustomEditor(tui, theme, keybindings);
+			const editor = (previous?.(tui, theme, keybindings) ??
+				new CustomEditor(tui, theme, keybindings)) as CustomEditor;
 
-			if (!(editor instanceof CustomEditor)) {
+			// Capability check instead of instanceof: other extensions (e.g.
+			// pi-raw-paste) build their editor from a DIFFERENT copy of
+			// pi-coding-agent (cc-tools ships its own node_modules), so
+			// `instanceof CustomEditor` is false cross-realm even though the
+			// editor is fully compatible — and the feature silently died.
+			if (
+				typeof editor.getText !== "function" ||
+				typeof editor.setText !== "function" ||
+				typeof editor.isShowingAutocomplete !== "function" ||
+				typeof editor.handleInput !== "function"
+			) {
 				return editor;
 			}
 
