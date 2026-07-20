@@ -103,9 +103,9 @@ test("double-esc-clear: first Esc shows a right-aligned hint above the editor", 
   editor.setText("hello");
 
   editor.handleInput(ESC);
-  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(widgets.has("cc-my-pi-double-esc-hint"));
 
-  const factory: any = widgets.get("cc-tools-double-esc-hint");
+  const factory: any = widgets.get("cc-my-pi-double-esc-hint");
   const component = factory(stubTui, stubTheme);
   const [line] = component.render(80);
   assert.ok(line.endsWith("Esc again to clear\x1b[0m"));
@@ -124,7 +124,7 @@ test("double-esc-clear: second Esc clears draft and hides the hint", () => {
   editor.handleInput(ESC);
   editor.handleInput(ESC);
   assert.equal(editor.getText(), "");
-  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(!widgets.has("cc-my-pi-double-esc-hint"));
 });
 
 test("double-esc-clear: hint auto-hides after the window elapses", async () => {
@@ -137,9 +137,9 @@ test("double-esc-clear: hint auto-hides after the window elapses", async () => {
   editor.setText("hello");
 
   editor.handleInput(ESC);
-  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(widgets.has("cc-my-pi-double-esc-hint"));
   await sleep(2100);
-  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(!widgets.has("cc-my-pi-double-esc-hint"));
 });
 
 test("double-esc-clear: typing after Esc hides the hint", () => {
@@ -152,9 +152,9 @@ test("double-esc-clear: typing after Esc hides the hint", () => {
   editor.setText("hello");
 
   editor.handleInput(ESC);
-  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(widgets.has("cc-my-pi-double-esc-hint"));
   editor.handleInput("a");
-  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(!widgets.has("cc-my-pi-double-esc-hint"));
 });
 
 test("double-esc-clear: disabled gate lets Esc pass through unchanged", () => {
@@ -194,7 +194,7 @@ test("double-esc-clear: wraps a cross-realm editor (capabilities, not instanceof
   assert.equal(editor, foreign); // same instance, wrapped in place
 
   editor.handleInput(ESC);
-  assert.ok(widgets.has("cc-tools-double-esc-hint")); // feature active
+  assert.ok(widgets.has("cc-my-pi-double-esc-hint")); // feature active
   editor.handleInput(ESC);
   assert.equal(text, ""); // second Esc cleared the draft
 });
@@ -211,7 +211,7 @@ test("double-esc-clear: busy: first Esc shows hint and does not clear", () => {
 
   editor.handleInput(ESC); // first Esc: shows hint, swallowed (does not abort)
   assert.equal(editor.getText(), "hello");
-  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(widgets.has("cc-my-pi-double-esc-hint"));
 });
 
 test("double-esc-clear: busy: second Esc clears the draft", () => {
@@ -227,7 +227,7 @@ test("double-esc-clear: busy: second Esc clears the draft", () => {
   editor.handleInput(ESC);
   editor.handleInput(ESC); // second Esc within window: clears
   assert.equal(editor.getText(), "");
-  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+  assert.ok(!widgets.has("cc-my-pi-double-esc-hint"));
 });
 
 test("double-esc-clear: already-stamped factory is not wrapped twice", () => {

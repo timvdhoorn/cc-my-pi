@@ -1,5 +1,5 @@
 /**
- * Interactive /cc-tools settings overlay with live ASCII previews.
+ * Interactive /cc-my-pi settings overlay with live ASCII previews.
  */
 import { getSettingsListTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -468,7 +468,7 @@ export async function openCcToolsSettingsPanel(
 	controller: CcToolsSettingsController,
 ): Promise<void> {
 	if (!ctx?.hasUI) {
-		ctx?.ui?.notify?.("/cc-tools UI requires TUI mode", "error");
+		ctx?.ui?.notify?.("/cc-my-pi UI requires TUI mode", "error");
 		return;
 	}
 
@@ -561,7 +561,7 @@ export async function openCcToolsSettingsPanel(
 					if (cacheLines && cacheWidth === width) return cacheLines;
 
 					const header = [
-						safeFg(theme, "accent", theme.bold?.("cc-tools settings") ?? "cc-tools settings") +
+						safeFg(theme, "accent", theme.bold?.("cc-my-pi settings") ?? "cc-my-pi settings") +
 							safeFg(
 								theme,
 								"muted",

@@ -49,7 +49,7 @@ import {
 	type CcToolsUiSnapshot,
 	type OutputMode,
 	type ToolStyle,
-} from "./cc-tools-settings-ui.js";
+} from "./cc-my-pi-settings-ui.js";
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
@@ -1262,7 +1262,7 @@ const TOOL_EXECUTION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool
 
 // Rendered-output cache for assistant/user/custom message components.
 // Keyed by (width, branch visual epoch, tool background mode). The epoch changes on
-// theme / /cc-tools branch / /cc-theme rebinds; the mode is included because subagent
+// theme / /cc-my-pi branch / /cc-theme rebinds; the mode is included because subagent
 // (custom-message) framing follows `toolBackgroundMode` via frameToolLikeLines. This avoids
 // re-running the per-line ANSI stripping (applyTerminalCopyZones, normalizeLeadingCheckGlyph,
 // border boxing) on every scroll/expand re-render — the dominant CPU cost on long chats,
@@ -2107,7 +2107,7 @@ function patchCustomMessageRender(): void {
 	if (typeof originalRender !== "function") return;
 	proto.render = function patchedCustomMessageRender(width: number) {
 		// Subagent framing follows `toolBackgroundMode` (via frameToolLikeLines), which
-		// can change via /cc-tools or by editing settings.json. Re-sync before the
+		// can change via /cc-my-pi or by editing settings.json. Re-sync before the
 		// cache check so the mode key reflects the current setting on warm renders too.
 		syncToolBackgroundMode();
 		const cached = messageRenderCacheHit(this, width);
@@ -2257,9 +2257,9 @@ function patchPromptEditorRender(): void {
 }
 
 // The prototype patch above only reaches editors that extend the CustomEditor
-// class pi's loader aliases for extension code. Editors built by cc-tools' own
+// class pi's loader aliases for extension code. Editors built by cc-my-pi' own
 // npm dependencies (pi-paster's PasterEditor) extend the CustomEditor copy in
-// cc-tools/node_modules — a different class object — so they miss the patch.
+// cc-my-pi/node_modules — a different class object — so they miss the patch.
 // This factory wrapper decorates the active editor INSTANCE instead,
 // class-agnostic, composing like esc-steer (immediate + deferred install).
 const PROMPT_GLYPH_FEATURE = "cc-prompt-glyph";
@@ -3662,7 +3662,7 @@ function refreshAllToolBranchVisuals(ctx: any): void {
 	invalidateThemePaletteCache();
 	applyToolBackgroundMode(ctx?.ui?.theme);
 	applyToolBranchColor(ctx?.ui?.theme);
-	bumpToolBranchVisualEpoch(); // always bust ToolText + container caches after /cc-tools branch
+	bumpToolBranchVisualEpoch(); // always bust ToolText + container caches after /cc-my-pi branch
 	// Tool rows recompute branch markup on next render (liveBranchDisplay + cache bust).
 	if (ctx?.hasUI) {
 		try {
@@ -6191,7 +6191,7 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /cc-tools command — control tool chrome, grouping, detail, and settings UI.
+	// /cc-my-pi command — control tool chrome, grouping, detail, and settings UI.
 	const getBranchPreset = (): BranchPreset => {
 		if (!toolBranchColorModeFixed()) return "theme";
 		const gray = getConfiguredToolBranchGray();
@@ -6370,13 +6370,13 @@ export default function (pi: ExtensionAPI) {
 			`Tool grouping: ${toolGroupingEnabled() ? "on" : "off"}`,
 			`Extra detail: ${extraToolOutputExpanded ? "on" : "off"} (${rawKeyHint("ctrl+shift+o", "toggle")})`,
 			branchLine,
-			`  /cc-tools branch <0-255> | theme | fixed | reset`,
+			`  /cc-my-pi branch <0-255> | theme | fixed | reset`,
 			`Diff preview: ${diffCollapsedLimit() ?? "stock (24 write / 32 edit)"} collapsed lines`,
-			`  /cc-tools diff <1-150> | stock | status`,
+			`  /cc-my-pi diff <1-150> | stock | status`,
 		].join("\n"), "info");
 	};
-	pi.registerCommand("cc-tools", {
-		description: "Open cc-tools settings UI (or style/group/branch/diff subcommands)",
+	pi.registerCommand("cc-my-pi", {
+		description: "Open cc-my-pi settings UI (or style/group/branch/diff subcommands)",
 		getArgumentCompletions(prefix) {
 			const parts = prefix.trimStart().split(/\s+/);
 			const first = parts[0] ?? "";
@@ -6423,7 +6423,7 @@ export default function (pi: ExtensionAPI) {
 		async handler(args, ctx) {
 			const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
 			const sub = parts[0] ?? "";
-			// Bare /cc-tools (or ui/settings) opens the interactive panel with live previews.
+			// Bare /cc-my-pi (or ui/settings) opens the interactive panel with live previews.
 			if (!sub || sub === "ui" || sub === "settings") {
 				await openCcToolsSettingsPanel(ctx, ccToolsSettingsController);
 				return;
@@ -6436,7 +6436,7 @@ export default function (pi: ExtensionAPI) {
 			if (sub === "group") {
 				const next = booleanMode(parts[1], toolGroupingEnabled());
 				if (next === undefined) {
-					if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-tools group ${TOOL_BOOL_MODES.join("|")}`, "error");
+					if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-my-pi group ${TOOL_BOOL_MODES.join("|")}`, "error");
 					return;
 				}
 				if (next === "status") {
@@ -6479,7 +6479,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const gray = Number.parseInt(arg, 10);
 				if (!Number.isFinite(gray) || gray < 0 || gray > 255) {
-					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-tools branch <0-255> | theme | fixed | reset", "error");
+					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-my-pi branch <0-255> | theme | fixed | reset", "error");
 					return;
 				}
 				writeSettingsKey("toolBranchRgbGray", gray);
@@ -6505,7 +6505,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				const n = Number.parseInt(arg, 10);
 				if (!Number.isFinite(n) || n <= 0 || n > 150) {
-					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-tools diff <1-150> | stock | status", "error");
+					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-my-pi diff <1-150> | stock | status", "error");
 					return;
 				}
 				writeSettingsKey("diffCollapsedLines", n);
@@ -6519,7 +6519,7 @@ export default function (pi: ExtensionAPI) {
 			if (sub === "detail" || sub === "extra") {
 				const next = booleanMode(parts[1], extraToolOutputExpanded);
 				if (next === undefined) {
-					if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-tools detail ${TOOL_BOOL_MODES.join("|")}`, "error");
+					if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-my-pi detail ${TOOL_BOOL_MODES.join("|")}`, "error");
 					return;
 				}
 				if (next === "status") {
@@ -6537,7 +6537,7 @@ export default function (pi: ExtensionAPI) {
 			if (!(TOOL_MODES as readonly string[]).includes(sub)) {
 				if (ctx.hasUI) {
 					ctx.ui.notify(
-						`Unknown option "${sub}". Try /cc-tools status, /cc-tools branch theme, or /cc-tools group toggle.`,
+						`Unknown option "${sub}". Try /cc-my-pi status, /cc-my-pi branch theme, or /cc-my-pi group toggle.`,
 						"error",
 					);
 				}

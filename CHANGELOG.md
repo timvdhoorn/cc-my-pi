@@ -3,7 +3,18 @@
 > [!IMPORTANT]
 > **1.0.69 — package rename (permanent).** Canonical npm name is now [`pi-claude-code-ui`](https://www.npmjs.com/package/pi-claude-code-ui). `pi-claude-style-tools` is legacy and will not receive further releases. Install with `pi install npm:pi-claude-code-ui` or `npm i pi-claude-code-ui`.
 
-## Unreleased
+## 1.1.0 — 2026-07-20
+
+### Changed
+
+- **Renamed** package `pi-claude-code-ui` → `cc-my-pi`; command `/cc-tools` →
+  `/cc-my-pi` (`/cc-theme` and `/cc-spinner` unchanged). Settings-UI module
+  renamed to `extensions/cc-my-pi-settings-ui.ts`. Repo renamed to
+  [timvdhoorn/cc-my-pi](https://github.com/timvdhoorn/cc-my-pi).
+- Added LICENSE (MIT, dual copyright) and a README "Credits & provenance"
+  section attributing FammasMaz (base fork), Thomas Mustier (queue-steer,
+  esc-steer), Sanju (double-esc-clear), and key dependencies.
+- No behavior changes.
 
 ### Added
 

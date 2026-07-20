@@ -13,7 +13,7 @@
  *
  * Bundled copy of the standalone `pi-esc-steer` package by the same author,
  * exposed as a register function gated by a live `isEnabled` getter so the
- * /cc-tools settings toggle takes effect without a Pi reload. Shares the
+ * /cc-my-pi settings toggle takes effect without a Pi reload. Shares the
  * `esc-steer` feature marker with the standalone package, so the two are
  * mutually exclusive automatically.
  */

@@ -1,7 +1,7 @@
 {
-  "name": "pi-claude-code-ui",
-  "version": "1.0.74",
-  "description": "Claude Code-style grouped tool rows for pi with Ctrl+O/Ctrl+Shift+O previews, math rendering, and consistent built-in, MCP, and custom tool rendering",
+  "name": "cc-my-pi",
+  "version": "1.1.0",
+  "description": "cc-my-pi — Claude Code-style UI for Pi: grouped tool rows, Shiki diffs, spinner, themes, esc/queue steering, and a /cc-my-pi settings panel. Personal fork of FammasMaz/pi-cc-tools.",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -18,19 +18,19 @@
     "diff"
   ],
   "license": "MIT",
-  "author": "FammasMaz",
+  "author": "Tim van den Hoorn",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/FammasMaz/pi-cc-tools.git"
+    "url": "git+https://github.com/timvdhoorn/cc-my-pi.git"
   },
-  "homepage": "https://github.com/FammasMaz/pi-cc-tools#readme",
+  "homepage": "https://github.com/timvdhoorn/cc-my-pi#readme",
   "bugs": {
-    "url": "https://github.com/FammasMaz/pi-cc-tools/issues"
+    "url": "https://github.com/timvdhoorn/cc-my-pi/issues"
   },
   "files": [
     "extensions/index.ts",
     "extensions/spinner.ts",
-    "extensions/cc-tools-settings-ui.ts",
+    "extensions/cc-my-pi-settings-ui.ts",
     "extensions/image-paster.ts",
     "extensions/esc-steer.ts",
     "extensions/double-esc-clear.ts",
@@ -40,7 +40,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-tools-settings-ui.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/queue-steer/index.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/queue-steer/index.ts",
     "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts",
     "pack:dry-run": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
@@ -69,5 +69,8 @@
     "@sinclair/typebox": "^0.34.49",
     "@types/node": "^25.7.0",
     "typescript": "^6.0.3"
-  }
+  },
+  "contributors": [
+    "FammasMaz (original pi-cc-tools / pi-claude-code-ui)"
+  ]
 }

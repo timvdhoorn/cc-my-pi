@@ -5,7 +5,7 @@
  *
  * Changes vs upstream:
  * - exposed as a register function gated by a live `isEnabled` getter so
- *   the /cc-tools settings toggle takes effect without a Pi reload;
+ *   the /cc-my-pi settings toggle takes effect without a Pi reload;
  * - Esc while busy only pauses/aborts when the chatbox is EMPTY — a typed
  *   draft leaves Esc to double-esc-clear (hint + second-Esc clear), so a
  *   draft never costs the user the running turn (decided 2026-07-20);
@@ -294,7 +294,7 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 	const renderQueue = (ctx: ExtensionContext): void => {
 		activeContext = ctx;
 		// Toggled off: no queue UI, regardless of state — mirrors registerBundledEscSteer's
-		// live isEnabled() gate so the /cc-tools toggle works without a Pi reload.
+		// live isEnabled() gate so the /cc-my-pi toggle works without a Pi reload.
 		if (!isEnabled()) {
 			ctx.ui.setWidget(WIDGET_ID, undefined);
 			return;

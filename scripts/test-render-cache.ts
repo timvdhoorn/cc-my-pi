@@ -129,8 +129,8 @@ const neq = (a: string[], b: string[], label: string) => {
 	fs.mkdirSync(`${tmpHome}/.pi`, { recursive: true });
 	process.env.HOME = tmpHome;
 	try {
-		const ccTools = (fakePi as any).commands.get("cc-tools");
-		if (!ccTools) throw new Error("cc-tools command not registered");
+		const ccTools = (fakePi as any).commands.get("cc-my-pi");
+		if (!ccTools) throw new Error("cc-my-pi command not registered");
 		const ctx = { hasUI: true, ui: { theme, notify() {}, getToolsExpanded() { return false; }, setToolsExpanded() {} } } as any;
 		const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 		// A full-width rule line (borderLine) is all '─' chars; branch connectors '└' are not.

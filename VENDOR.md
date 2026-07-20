@@ -1,6 +1,6 @@
 # Vendored plugins
 
-Single source of truth for third-party plugins bundled into cc-tools.
+Single source of truth for third-party plugins bundled into cc-my-pi.
 Sync workflow: invoke the `sync-vendored-plugins` skill (Pi-config root,
 `.claude/skills/sync-vendored-plugins/`). Every entry lists the EXACT local
 delta — a sync re-applies those items and nothing else; undocumented drift

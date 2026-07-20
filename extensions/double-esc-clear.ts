@@ -20,7 +20,7 @@
  *
  * Vendored from @thisux/pi-double-esc-clear v1.0.3 (MIT, author Sanju
  * <https://sanju.sh/>). Exposed as a register function gated by a live
- * `isEnabled` getter so the /cc-tools settings toggle takes effect without a
+ * `isEnabled` getter so the /cc-my-pi settings toggle takes effect without a
  * Pi reload. Adds an `EDITOR_FEATURES` marker (absent in the standalone
  * package) so a second bundled install does not double-wrap.
  *
@@ -42,7 +42,7 @@ const DOUBLE_ESC_MS = 2_000;
 const EDITOR_FEATURES = Symbol.for("@tmustier/pi-editor-features");
 const FEATURE = "double-esc-clear";
 
-const HINT_WIDGET_KEY = "cc-tools-double-esc-hint";
+const HINT_WIDGET_KEY = "cc-my-pi-double-esc-hint";
 const HINT_TEXT = "Esc again to clear";
 
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
@@ -110,7 +110,7 @@ export function registerBundledDoubleEscClear(
 
 			// Capability check instead of instanceof: other extensions (e.g.
 			// pi-raw-paste) build their editor from a DIFFERENT copy of
-			// pi-coding-agent (cc-tools ships its own node_modules), so
+			// pi-coding-agent (cc-my-pi ships its own node_modules), so
 			// `instanceof CustomEditor` is false cross-realm even though the
 			// editor is fully compatible — and the feature silently died.
 			if (

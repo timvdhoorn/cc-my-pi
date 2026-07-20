@@ -1,17 +1,12 @@
-# pi-claude-code-ui
+# cc-my-pi
 
-> [!IMPORTANT]
-> **Package renamed in 1.0.69.** This project is now published as [`pi-claude-code-ui`](https://www.npmjs.com/package/pi-claude-code-ui) (was `pi-claude-style-tools`).
->
-> Install / migrate:
->
-> ```bash
-> pi install npm:pi-claude-code-ui
-> # or
-> npm i pi-claude-code-ui
-> ```
->
-> See [CHANGELOG 1.0.69](./CHANGELOG.md#1069--2026-07-17) for the full release notes (status dots, bare branch connectors, and more).
+> Personal Pi UI bundle — Claude Code-inspired tool rendering, spinner, themes, and esc/queue steering. Fork of [pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`), heavily adapted. See [Credits & provenance](#credits--provenance).
+
+Loaded by local path from `~/.pi/agent/settings.json` (not published to npm):
+
+```json
+"packages": ["/path/to/Pi-config/cc-my-pi"]
+```
 
 Claude Code inspired tool rendering for Pi — Shiki-powered diffs, status dots, branch connectors, file icons, and configurable output modes.
 
@@ -30,7 +25,7 @@ Claude Code inspired tool rendering for Pi — Shiki-powered diffs, status dots,
 - **Subagent completion notifications** restyled to match the same Claude-style tool rows
 - **RTK rewrite integration** that folds rewrite notices into the bash tool row with a muted `(RTK)` badge and expanded-only rewrite details
 - **Built-in image paster** — clipboard images and pasted image paths become first-class attachments through bundled `pi-paster` (toggle with `imagePasterEnabled`)
-- **Bundled Esc behaviors** — Claude Code's two Escape reflexes, both on by default and toggleable live from `/cc-tools`: Esc while the agent runs aborts and auto-continues whatever was queued (`escSteerEnabled`), and double-Esc on a non-empty idle draft clears it (`doubleEscClearEnabled`)
+- **Bundled Esc behaviors** — Claude Code's two Escape reflexes, both on by default and toggleable live from `/cc-my-pi`: Esc while the agent runs aborts and auto-continues whatever was queued (`escSteerEnabled`), and double-Esc on a non-empty idle draft clears it (`doubleEscClearEnabled`)
 - **Transparent tool backgrounds** in `transparent` or `border` mode
 - **Theme-adaptive palette** — borders, branch connectors, dim text, spinner accent, and diff backgrounds automatically follow the active pi theme (set `themeAdaptive: false` to keep the fixed Claude-style palette)
 - **Light Ghostty-sync themes** — edit/write diffs use `github-light` highlighting and light-tinted diff rows; tool pending dots use softer chrome colors
@@ -75,7 +70,7 @@ When `themeAdaptive` is `true` (default), the following colors are derived from 
 | Element | Derived from |
 | --------- | -------------- |
 | User box, tool rules, code fences | `dim` → `muted` → `borderMuted` → `thinkingText` |
-| Branch connectors (`├`, `└`, `│`) | **fixed rgb(72)** by default (theme-independent); `/cc-tools branch theme` to follow pi theme |
+| Branch connectors (`├`, `└`, `│`) | **fixed rgb(72)** by default (theme-independent); `/cc-my-pi branch theme` to follow pi theme |
 | "✻ Turn took Ns" line (final message only, with session total + turn count) | `muted` |
 | Thinking-block text and `∴` marker (marker hidden when thinking is collapsed) | `muted` |
 | Diff add/remove accents | `toolDiffAdded` / `toolDiffRemoved` |
@@ -131,19 +126,19 @@ The selection is persisted as `spinnerVerbColor` / `spinnerStatusColor` in `~/.p
 | `transparent` | Transparent tool backgrounds |
 | `border` | Transparent backgrounds with top/bottom border lines |
 
-Use `/cc-tools` to control tool UI at runtime:
+Use `/cc-my-pi` to control tool UI at runtime:
 
 ```text
-/cc-tools                 # open interactive settings panel (live ASCII preview)
-/cc-tools ui              # same as bare /cc-tools
-/cc-tools status          # text dump of style, grouping, bullets, branch
-/cc-tools outlines        # tool style: outlines, transparent, or default
-/cc-tools group toggle    # toggle grouped adjacent/concurrent tool calls
-/cc-tools group off       # disable grouping (also ungroups current grouped rows)
-/cc-tools detail toggle   # same mode as Ctrl+Shift+O
-/cc-tools bullets default # use Pi theme's native list marker
-/cc-tools bullets dash    # force plain markdown "-" markers
-/cc-tools bullets toggle  # flip default ↔ dash
+/cc-my-pi                 # open interactive settings panel (live ASCII preview)
+/cc-my-pi ui              # same as bare /cc-my-pi
+/cc-my-pi status          # text dump of style, grouping, bullets, branch
+/cc-my-pi outlines        # tool style: outlines, transparent, or default
+/cc-my-pi group toggle    # toggle grouped adjacent/concurrent tool calls
+/cc-my-pi group off       # disable grouping (also ungroups current grouped rows)
+/cc-my-pi detail toggle   # same mode as Ctrl+Shift+O
+/cc-my-pi bullets default # use Pi theme's native list marker
+/cc-my-pi bullets dash    # force plain markdown "-" markers
+/cc-my-pi bullets toggle  # flip default ↔ dash
 ```
 
 The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, Esc continues queue, double-Esc clears draft, theme-adaptive, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
@@ -153,7 +148,7 @@ The settings panel lists style, grouping, extra detail, branch color, list bulle
 ### Bundled Esc behaviors
 
 Two Escape reflexes from Claude Code ship bundled and **default to on**. Toggle
-either live from the `/cc-tools` settings panel (no reload needed):
+either live from the `/cc-my-pi` settings panel (no reload needed):
 
 | Setting | Default | Behavior |
 | --------- | --------- | ---------- |
@@ -213,10 +208,28 @@ This package targets recent Pi versions where tool renderers use:
 
 Unknown/custom tools do not have a public global renderer hook in Pi, so this package patches container rendering to add top/bottom borders for all tool executions in border mode.
 
-## Credits
+## Credits & provenance
 
-This project builds upon and was inspired by the excellent work of:
+cc-my-pi is not an original work — it stands on these projects:
+
+| Component | Upstream | Author | License |
+|---|---|---|---|
+| Core tool rendering, diffs, spinner, settings UI (base fork) | [FammasMaz/pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`) | FammasMaz | MIT |
+| `extensions/queue-steer/` (vendored, adapted) | [tmustier/pi-queue-steer](https://github.com/tmustier/pi-queue-steer) | Thomas Mustier | MIT |
+| `extensions/esc-steer.ts` (vendored, adapted) | `pi-esc-steer` | Thomas Mustier | MIT |
+| `extensions/double-esc-clear.ts` (vendored, adapted) | [`@thisux/pi-double-esc-clear`](https://www.npmjs.com/package/@thisux/pi-double-esc-clear) v1.0.3 | [Sanju](https://sanju.sh/) | MIT |
+| Visual design reference | [Claude Code](https://github.com/anthropics/claude-code) (Anthropic) — glyphs, colors, and layout re-implemented, no code copied | — | — |
+| Syntax highlighting | [Shiki](https://shiki.style) (`@shikijs/cli`) | Shiki contributors | MIT |
+| Diff engine | [jsdiff](https://github.com/kpdecker/jsdiff) (`diff`) | Kevin Decker & contributors | BSD-3-Clause |
+| Image pasting | `pi-paster` | — | see package |
+
+The base fork itself builds upon and was inspired by:
 
 - **[@heyhuynhgiabuu/pi-pretty](https://github.com/buddingnewinsights/pi-pretty)** by [huynhgiabuu](https://github.com/buddingnewinsights) — Pretty terminal output with syntax-highlighted file reads, colored bash output, and tree-view directory listings
 - **[@heyhuynhgiabuu/pi-diff](https://github.com/buddingnewinsights/pi-diff)** by [huynhgiabuu](https://github.com/buddingnewinsights) — Shiki-powered terminal diff renderer with word-level diffs in split and unified views
 - **[pi-tool-display](https://github.com/MasuRii/pi-tool-display)** by [MasuRii](https://github.com/MasuRii) — Compact tool call rendering, diff visualization, and output truncation
+
+Vendored-copy details, pinned versions, and the exact local deltas live in
+[VENDOR.md](./VENDOR.md). The base fork has diverged substantially from
+upstream (see [CHANGELOG.md](./CHANGELOG.md) and the `plans/` history in the
+parent Pi-config repo); bugs here are mine, not the upstream authors'.
