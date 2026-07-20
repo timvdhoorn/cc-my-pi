@@ -1,50 +1,82 @@
 import { restoreUserMessageBackground } from "./user-message-render.ts";
 
+export interface BashContentOptions {
+	outputLines: string[]; // component's raw lines (plain text)
+	status: string; // "running" | "complete" | "error" | "cancelled"
+	exitCode: number | undefined;
+	truncated: boolean;
+	fullOutputPath: string | undefined;
+	loaderLines: string[]; // pre-rendered loader lines while running, else []
+	innerWidth: number; // width available for content (width - 6)
+	runningTailLimit: number; // cap while streaming (use 20)
+	wrap: (line: string, width: number) => string[];
+	styleOutput: (line: string) => string; // muted
+	styleError: (line: string) => string;
+	styleWarning: (line: string) => string;
+}
+
 /**
- * Strips pi-core's `BashExecutionComponent` frame (spacer, top/bottom `─` rules,
- * `$ command` header block) from its rendered lines, leaving only the content
- * that belongs under the Claude-style result arm (output, loader, status).
+ * Builds the `⎿`-arm content lines directly from the `BashExecutionComponent`
+ * instance's own state, instead of parsing pi-core's rendered output. pi-core's
+ * render layout is not stable enough to splice apart reliably (the header and
+ * output are not always separated by a blank line), so this reads the source
+ * of truth (`outputLines`, `status`, `exitCode`, ...) and re-derives the
+ * content block that used to be scraped from rendered text.
  *
- * The header block is "the first content line (matching `$ `) through the next
- * blank line" — this also swallows a wrapped multi-line header, since wrapped
- * continuation lines sit between the header start and that same blank line.
- * When no blank line follows the header at all (e.g. a running command with no
- * output yet, where the loader trails the header with no separator), only the
- * single header line is dropped so the loader line survives as content.
- *
- * Returns `null` if the first non-blank, non-rule line does not look like a
- * header (`$ ...`) — callers should treat that as "unrecognized shape" and
- * fall back to the original render. An empty array (as opposed to `null`)
- * means the header was found but there is no output/loader/status content.
+ * Claude Code parity: shows the FULL output once a command finishes (no
+ * "... N more lines" collapse) — only the `status === "running"` case caps to
+ * `runningTailLimit` wrapped lines, to keep the live streaming preview cheap.
  */
-export function classifyBashRenderLines(
-	lines: string[],
-	stripAnsi: (line: string) => string,
-): string[] | null {
-	const isBlank = (line: string) => stripAnsi(line).trim() === "";
-	const isRule = (line: string) => /^─+$/.test(stripAnsi(line).trim());
+export function buildBashContentLines(opts: BashContentOptions): string[] {
+	const {
+		outputLines,
+		status,
+		exitCode,
+		truncated,
+		fullOutputPath,
+		loaderLines,
+		innerWidth,
+		runningTailLimit,
+		wrap,
+		styleOutput,
+		styleError,
+		styleWarning,
+	} = opts;
 
 	let start = 0;
-	let end = lines.length;
-	while (start < end && isBlank(lines[start]!)) start += 1;
-	while (end > start && isBlank(lines[end - 1]!)) end -= 1;
-	if (start < end && isRule(lines[start]!)) start += 1;
-	if (end > start && isRule(lines[end - 1]!)) end -= 1;
-	while (start < end && isBlank(lines[start]!)) start += 1;
-	while (end > start && isBlank(lines[end - 1]!)) end -= 1;
+	let end = outputLines.length;
+	while (start < end && outputLines[start]!.trim() === "") start += 1;
+	while (end > start && outputLines[end - 1]!.trim() === "") end -= 1;
 
-	if (start >= end) return [];
-	if (!stripAnsi(lines[start]!).trim().startsWith("$ ")) return null;
-
-	let blankIndex = -1;
-	for (let i = start + 1; i < end; i++) {
-		if (isBlank(lines[i]!)) {
-			blankIndex = i;
-			break;
+	const wrapped: string[] = [];
+	for (let i = start; i < end; i++) {
+		for (const wrappedLine of wrap(outputLines[i]!, innerWidth)) {
+			wrapped.push(styleOutput(wrappedLine));
 		}
 	}
-	const contentStart = blankIndex === -1 ? start + 1 : blankIndex + 1;
-	return lines.slice(contentStart, end);
+
+	if (status === "running") {
+		const tail = opts.runningTailLimit > 0 ? wrapped.slice(-runningTailLimit) : wrapped;
+		// pi-tui's Loader.render() prefixes its output with a blank line
+		// (`["", ...spinnerLine]`); drop leading blank entries so an empty
+		// output block doesn't leave the `⎿` arm pointing at a blank line.
+		const loader = [...loaderLines];
+		while (loader.length > 0 && loader[0]!.replace(/\x1b\[[0-9;]*m/g, "").trim() === "") {
+			loader.shift();
+		}
+		return [...tail, ...loader];
+	}
+
+	const content = [...wrapped];
+	if (status === "cancelled") {
+		content.push(styleWarning("(cancelled)"));
+	} else if (status === "error") {
+		content.push(styleError(`(exit ${exitCode})`));
+	}
+	if (truncated && fullOutputPath) {
+		content.push(styleWarning(`Output truncated. Full output: ${fullOutputPath}`));
+	}
+	return content;
 }
 
 export interface BashRenderOptions {

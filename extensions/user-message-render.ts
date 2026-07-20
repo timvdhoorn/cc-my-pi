@@ -115,6 +115,8 @@ export function userMessageCopyPayload(plain: string): string {
   return plain.replace(/^❯\s*/, "");
 }
 
+const LEADING_BASH_BANG = /^((?:\x1b\[[0-9;]*m)*)!/;
+
 export function prefixEditorPromptLine(
   line: string,
   paddingX: number,
@@ -122,11 +124,24 @@ export function prefixEditorPromptLine(
   chromeColor: string,
   reset: string,
   truncate: (line: string, width: number, ellipsis: string) => string,
+  bashColor?: string,
 ): string {
   const removablePadding = Math.min(
     Math.max(0, paddingX),
     line.match(/^ */)?.[0].length ?? 0,
   );
   const content = line.slice(removablePadding);
+  if (bashColor) {
+    const bangMatch = content.match(LEADING_BASH_BANG);
+    if (bangMatch) {
+      // Drop the typed `!` itself, keep any ANSI codes that preceded it (e.g.
+      // the cursor's inverse styling), so a bash-mode draft renders with the
+      // `!` glyph in place of the typed character rather than duplicating it.
+      // Known cosmetic edge: with the cursor ON the leading `!`, the cursor's
+      // inverse styling for that one character is dropped for this frame.
+      const rest = content.slice(bangMatch[0].length);
+      return truncate(`${bangMatch[1]}${bashColor}!${reset} ${rest}`, width, "");
+    }
+  }
   return truncate(`${chromeColor}❯${reset} ${content}`, width, "");
 }

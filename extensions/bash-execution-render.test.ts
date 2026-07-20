@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyBashRenderLines, renderClaudeBashLines } from "./bash-execution-render.ts";
+import { buildBashContentLines, renderClaudeBashLines } from "./bash-execution-render.ts";
 
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const stripAnsi = (value: string) => value.replace(ANSI, "");
@@ -27,50 +27,99 @@ function render(command: string, width: number, contentLines: string[]): string[
 	});
 }
 
-test("splitter drops spacer, both rules, and the header block; keeps output, loader, status in order", () => {
-	const lines = [
-		"",
-		"────────",
-		"$ npm test",
-		"",
-		"output line 1",
-		"output line 2",
-		"Running... (esc to cancel)",
-		"────────",
-	];
-	assert.deepEqual(classifyBashRenderLines(lines, stripAnsi), [
-		"output line 1",
-		"output line 2",
-		"Running... (esc to cancel)",
-	]);
+// Plain stubs for buildBashContentLines: `wrap` hard-splits at width, style
+// functions are identity-ish (tag the string so assertions can see which
+// style was applied without needing real ANSI codes).
+const wrap = (line: string, width: number): string[] => {
+	if (width <= 0 || line.length <= width) return [line];
+	const parts: string[] = [];
+	for (let i = 0; i < line.length; i += width) parts.push(line.slice(i, i + width));
+	return parts;
+};
+const styleOutput = (line: string) => `OUT:${line}`;
+const styleError = (line: string) => `ERR:${line}`;
+const styleWarning = (line: string) => `WARN:${line}`;
+
+function buildContent(overrides: Partial<Parameters<typeof buildBashContentLines>[0]> = {}) {
+	return buildBashContentLines({
+		outputLines: [],
+		status: "complete",
+		exitCode: undefined,
+		truncated: false,
+		fullOutputPath: undefined,
+		loaderLines: [],
+		innerWidth: 80,
+		runningTailLimit: 20,
+		wrap,
+		styleOutput,
+		styleError,
+		styleWarning,
+		...overrides,
+	});
+}
+
+test("full output shown when complete (no tail cap): 30 in -> 30 out, in order", () => {
+	const outputLines = Array.from({ length: 30 }, (_, i) => `line ${i}`);
+	const result = buildContent({ outputLines, status: "complete" });
+	assert.equal(result.length, 30);
+	assert.deepEqual(result, outputLines.map(styleOutput));
 });
 
-test("splitter drops both lines of a wrapped 2-line header block", () => {
-	const lines = [
-		"",
-		"────────",
-		"$ some very long command that wraps onto",
-		"a second line",
-		"",
-		"output line 1",
-		"────────",
-	];
-	assert.deepEqual(classifyBashRenderLines(lines, stripAnsi), ["output line 1"]);
+test("running: tail cap applies (30 in, limit 20 -> last 20) + loader lines appended", () => {
+	const outputLines = Array.from({ length: 30 }, (_, i) => `line ${i}`);
+	const result = buildContent({
+		outputLines,
+		status: "running",
+		runningTailLimit: 20,
+		loaderLines: ["spinner"],
+	});
+	assert.equal(result.length, 21);
+	assert.deepEqual(result.slice(0, 20), outputLines.slice(-20).map(styleOutput));
+	assert.equal(result[20], "spinner");
 });
 
-test("splitter with no output (rules + header only) returns empty content", () => {
-	const lines = ["", "────────", "$ ls -la", "────────"];
-	assert.deepEqual(classifyBashRenderLines(lines, stripAnsi), []);
+test("running: leading blank loader line (pi-tui Loader.render() shape) is dropped, no blank line before the arm", () => {
+	const result = buildContent({
+		outputLines: [],
+		status: "running",
+		loaderLines: ["", "Running..."],
+	});
+	assert.deepEqual(result, ["Running..."]);
 });
 
-test("splitter returns null for an unrecognized shape (no header line found)", () => {
-	const lines = ["", "────────", "not a header line", "────────"];
-	assert.equal(classifyBashRenderLines(lines, stripAnsi), null);
+test("error appends (exit 1) styled via styleError", () => {
+	const result = buildContent({ outputLines: ["ok"], status: "error", exitCode: 1 });
+	assert.deepEqual(result, ["OUT:ok", "ERR:(exit 1)"]);
 });
 
-test("splitter keeps a trailing loader line that has no blank separator from the header", () => {
-	const lines = ["", "────────", "$ npm test", "Running... (esc to cancel)", "────────"];
-	assert.deepEqual(classifyBashRenderLines(lines, stripAnsi), ["Running... (esc to cancel)"]);
+test("cancelled appends (cancelled) via styleWarning", () => {
+	const result = buildContent({ outputLines: ["ok"], status: "cancelled" });
+	assert.deepEqual(result, ["OUT:ok", "WARN:(cancelled)"]);
+});
+
+test("truncation warning appended when truncated && fullOutputPath", () => {
+	const result = buildContent({
+		outputLines: ["ok"],
+		status: "complete",
+		truncated: true,
+		fullOutputPath: "/tmp/full.txt",
+	});
+	assert.deepEqual(result, ["OUT:ok", "WARN:Output truncated. Full output: /tmp/full.txt"]);
+});
+
+test("long lines wrap via wrap (1 logical -> N wrapped, all present)", () => {
+	const result = buildContent({ outputLines: ["abcdefghij"], innerWidth: 4, status: "complete" });
+	assert.deepEqual(result, ["OUT:abcd", "OUT:efgh", "OUT:ij"]);
+});
+
+test("success with no output -> []", () => {
+	const result = buildContent({ outputLines: [], status: "complete" });
+	assert.deepEqual(result, []);
+});
+
+test("leading/trailing blank outputLines trimmed", () => {
+	const result = buildContent({ outputLines: ["", "", "middle", "", ""], status: "complete" });
+	assert.deepEqual(result, ["OUT:middle"]);
 });
 
 test("band line: background start, bold glyph, padded to width, transparent reset end", () => {

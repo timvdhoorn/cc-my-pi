@@ -107,6 +107,76 @@ test("adds a Claude chevron to the live editor row", () => {
   assert.match(stripAnsi(line), /^❯ text/);
 });
 
+const bashColor = "\x1b[38;2;200;150;50m";
+
+test("bash-mode draft with bashColor shows the ! glyph, drops the typed !, keeps the rest", () => {
+  const line = prefixEditorPromptLine(
+    "!ip a",
+    0,
+    16,
+    "\x1b[38;2;104;104;104m",
+    reset,
+    (value) => value,
+    bashColor,
+  );
+  assert.ok(line.includes(`${bashColor}!${reset}`));
+  assert.match(stripAnsi(line), /^! ip a/);
+  assert.equal((stripAnsi(line).match(/!/g) ?? []).length, 1);
+});
+
+test("bash-mode draft without bashColor keeps the old chevron behavior", () => {
+  const line = prefixEditorPromptLine(
+    "!ip a",
+    0,
+    16,
+    "\x1b[38;2;104;104;104m",
+    reset,
+    (value) => value,
+  );
+  assert.match(stripAnsi(line), /^❯ !ip a/);
+});
+
+test("normal draft with bashColor still uses the chevron path", () => {
+  const line = prefixEditorPromptLine(
+    "hello",
+    0,
+    16,
+    "\x1b[38;2;104;104;104m",
+    reset,
+    (value) => value,
+    bashColor,
+  );
+  assert.match(stripAnsi(line), /^❯ hello/);
+});
+
+test("draft !!cmd shows a single ! glyph, remaining content starts with !cmd", () => {
+  const line = prefixEditorPromptLine(
+    "!!cmd",
+    0,
+    16,
+    "\x1b[38;2;104;104;104m",
+    reset,
+    (value) => value,
+    bashColor,
+  );
+  const plain = stripAnsi(line);
+  assert.match(plain, /^! !cmd/);
+});
+
+test("ANSI codes before the leading ! are preserved after stripping it", () => {
+  const cursorStyle = "\x1b[7m";
+  const line = prefixEditorPromptLine(
+    `${cursorStyle}!ip a`,
+    0,
+    16,
+    "\x1b[38;2;104;104;104m",
+    reset,
+    (value) => value,
+    bashColor,
+  );
+  assert.ok(line.startsWith(`${cursorStyle}${bashColor}!`));
+});
+
 test("strips a trailing attached-image-paths block from display", () => {
   const lines = [
     "dit is een test [#image 1] kun je testen",

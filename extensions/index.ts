@@ -73,7 +73,7 @@ import {
 	trimUserMessagePadding,
 	userMessageCopyPayload,
 } from "./user-message-render.js";
-import { classifyBashRenderLines, renderClaudeBashLines } from "./bash-execution-render.js";
+import { buildBashContentLines, renderClaudeBashLines } from "./bash-execution-render.js";
 
 import * as Diff from "diff";
 import type { BundledLanguage, BundledTheme } from "shiki";
@@ -2267,6 +2267,14 @@ function patchUserMessageRender(): void {
 }
 
 const BASH_EXECUTION_PATCH_FLAG = Symbol.for("cc-my-pi:bash-execution-render");
+const BASH_EXECUTION_RENDER_CACHE = Symbol.for("cc-my-pi:bash-execution-render-cache");
+const BASH_RUNNING_TAIL_LIMIT = 20;
+
+function wrapPlainLine(line: string, width: number): string[] {
+	if (width <= 0) return [line];
+	const wrapped = wrapTextWithAnsi(line, width);
+	return Array.isArray(wrapped) ? wrapped : [line];
+}
 
 /**
  * Restyles `!` bash-mode executions from pi-core's framed block (spacer, two
@@ -2274,6 +2282,13 @@ const BASH_EXECUTION_PATCH_FLAG = Symbol.for("cc-my-pi:bash-execution-render");
  * `!` band (matching the user-message band) with the output/loader/status
  * indented under a `⎿` arm. `!!` (excludeFromContext) runs share the same
  * band — dim-mode is not distinguished, see commit body.
+ *
+ * The content lines are built directly from the component's own state
+ * (`outputLines`/`status`/`exitCode`/...) rather than parsed out of pi-core's
+ * rendered text — pi-core's render layout is not reliable enough to splice
+ * apart (see git history for the splitter this replaced). This also means the
+ * FULL output is shown once a command finishes, matching Claude Code (no
+ * "... N more lines" collapse / ctrl+o dependence).
  */
 function patchBashExecutionRender(): void {
 	const proto = BashExecutionComponent.prototype as any;
@@ -2281,16 +2296,45 @@ function patchBashExecutionRender(): void {
 	const originalRender = proto.render;
 	if (typeof originalRender !== "function") return;
 	proto.render = function patchedBashExecutionRender(width: number) {
-		const original = originalRender.call(this, width);
-		if (!Array.isArray(original) || original.length === 0) return original;
+		if (!Array.isArray(this.outputLines) || typeof this.status !== "string") {
+			return originalRender.call(this, width);
+		}
+		if (this.status !== "running") {
+			const cached = (this as any)[BASH_EXECUTION_RENDER_CACHE];
+			if (
+				cached
+				&& cached.width === width
+				&& cached.count === this.outputLines.length
+				&& cached.status === this.status
+			) {
+				return cached.lines;
+			}
+		}
 		const innerWidth = Math.max(10, width - 6);
-		const narrow = originalRender.call(this, innerWidth);
-		if (!Array.isArray(narrow) || narrow.length === 0) return original;
-		const contentLines = classifyBashRenderLines(narrow, stripAnsi);
-		if (contentLines === null) return original;
+		const loaderLines: string[] =
+			this.status === "running" && typeof this.loader?.render === "function"
+				? this.loader.render(innerWidth)
+				: [];
 		const theme = getGlobalPiTheme() as any;
 		const glyphColor = safeFgAnsi(theme, "bashMode") ?? BORDER_COLOR;
 		const branchColor = currentToolBranchAnsi(theme);
+		const mutedColor = safeFgAnsi(theme, "muted") ?? FG_DIM;
+		const errorColor = safeFgAnsi(theme, "error") ?? mutedColor;
+		const warningColor = safeFgAnsi(theme, "warning") ?? mutedColor;
+		const contentLines = buildBashContentLines({
+			outputLines: this.outputLines,
+			status: this.status,
+			exitCode: this.exitCode,
+			truncated: this.truncationResult?.truncated === true,
+			fullOutputPath: this.fullOutputPath,
+			loaderLines: Array.isArray(loaderLines) ? loaderLines : [],
+			innerWidth,
+			runningTailLimit: BASH_RUNNING_TAIL_LIMIT,
+			wrap: wrapPlainLine,
+			styleOutput: (line) => `${mutedColor}${line}${TRANSPARENT_RESET}`,
+			styleError: (line) => `${errorColor}${line}${TRANSPARENT_RESET}`,
+			styleWarning: (line) => `${warningColor}${line}${TRANSPARENT_RESET}`,
+		});
 		const rendered = renderClaudeBashLines({
 			command: this.command,
 			width: Math.max(1, width),
@@ -2303,6 +2347,14 @@ function patchBashExecutionRender(): void {
 			clamp: clampLineWidth,
 			visibleWidth,
 		});
+		if (this.status !== "running") {
+			(this as any)[BASH_EXECUTION_RENDER_CACHE] = {
+				width,
+				count: this.outputLines.length,
+				status: this.status,
+				lines: rendered,
+			};
+		}
 		return rendered;
 	};
 	proto[BASH_EXECUTION_PATCH_FLAG] = true;
@@ -2320,6 +2372,7 @@ function patchPromptEditorRender(): void {
 				BORDER_COLOR,
 				RESET,
 				truncateToWidth,
+				safeFgAnsi(getGlobalPiTheme() as any, "bashMode") ?? BORDER_COLOR,
 			),
 	);
 }
@@ -2346,15 +2399,23 @@ function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
 			editor.render = (width: number): string[] => {
 				const lines = originalRender(width);
 				if (!Array.isArray(lines) || lines.length < 3 || width < 2) return lines;
-				// Skip when the prototype patch (or a nested wrapper) already drew it.
-				if (stripAnsi(lines[1] ?? "").trimStart().startsWith("❯")) return lines;
+				// Skip when the prototype patch (or a nested wrapper) already drew it —
+				// either the `❯` chevron or the `!` bash-mode glyph (recognized by its
+				// leading ANSI color code, since an undecorated bash draft starts with
+				// padding spaces or a bare `!`).
+				const rawLine1 = lines[1] ?? "";
+				const plainLine1 = stripAnsi(rawLine1).trimStart();
+				const alreadyDecorated =
+					plainLine1.startsWith("❯") || (plainLine1.startsWith("! ") && rawLine1.startsWith("\x1b"));
+				if (alreadyDecorated) return lines;
 				lines[1] = prefixEditorPromptLine(
-					lines[1] ?? "",
+					rawLine1,
 					(editor as any).getPaddingX?.() ?? 0,
 					width,
 					BORDER_COLOR,
 					RESET,
 					truncateToWidth,
+					safeFgAnsi(getGlobalPiTheme() as any, "bashMode") ?? BORDER_COLOR,
 				);
 				return lines;
 			};
