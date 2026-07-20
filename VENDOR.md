@@ -32,26 +32,12 @@ in vendored files is a bug.
 ## extensions/claude-header/
 
 - **Upstream**: https://github.com/Phoobobo/pi-claude-code-tui
-- **License**: MIT — Phoobobo
-- **Pinned**: v0.1.10 / commit `e5061f0` (vendored 2026-07-20)
-- **Files**: index.ts (adapted from `extensions/claude-code-startup.ts`, header
-  only), render-utils.ts (subset of upstream `extensions/render-utils.ts`,
-  verbatim bodies — header helpers only, editor-only helpers omitted)
-- **Local delta** (keep exactly these, nothing more):
-  1. default export → `registerClaudeHeader(pi, enabled, hooks?)` with no
-     default export, no `use-claude-code-tui` / `use-default-tui` commands,
-     gated by `if (!enabled) return;`
-  2. `HeaderHooks = { onTui?: (tui: TUI) => void }` — called from the setHeader
-     factory so cc-my-pi's statusline module keeps its side effects
-     (activeTui capture / requestRender wiring / theme-section removal)
-  3. fixed tip `["use-default-tui"]` → `["cc-my-pi"]`
-  4. tagline `"Let's build something great"` → `"cc-my-pi · Claude Code look for Pi"`
-  5. sibling import specifiers (`./render-utils.ts`)
-  6. dropped the editor half: `CodexStyleEditor`, `setEditorComponent`,
-     `ctx.ui.setTitle("Pi")`
-  - Harness note (not a semantic change): the `PiStartupHeader` constructor
-    uses explicit field assignments instead of parameter properties, since
-    cc-my-pi's tests run under Node's strip-types.
+- **License**: MIT — Phoobobo (attribution retained in `index.ts`)
+- **FORKED 2026-07-20 (plan 031)** — attribution only; do not sync via
+  sync-vendored-plugins. The layout, the π mascot (`pi-mascot.ts`) and the
+  right-column Loaded panel (`loaded-stats.ts`) are original cc-my-pi work; only
+  the box-drawing scaffolding and the setHeader/onTui registration shape descend
+  from upstream commit `e5061f0`. Future upstream changes are irrelevant.
 - **Mutual exclusion**: no shared feature marker upstream — do NOT install
   `npm:pi-claude-code-tui` alongside (both would render a header).
 

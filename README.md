@@ -95,7 +95,9 @@ same file.
 |---|---|---|---|---|
 | Core tool rendering | Compact `read`/`bash`/`grep`/`find`/`ls`/`edit`/`write` rows, Claude-style OpenAI/`apply_patch` tools, minimal diff chrome, thinking labels, MCP-aware rendering | — (base module, always on while loaded) | on | — |
 | Spinner | Claude-style spinner verb + status text (falls back to Pi's stock spinner when off) | `spinnerEnabled` | `true` | reload |
-| Startup header | Vendored `pi-claude-code-tui` (header only) — animated boxed Pi-logo header with model/effort/cwd and a slash-command tips column; off falls back to the one-line `✻ Welcome to Pi` header | `claudeHeaderEnabled` | `true` | reload |
+| Startup header | Boxed header (forked from `pi-claude-code-tui`) — Claude Code proportions: a narrow left column with an animated π mascot + model/effort/cwd, and a wide right column with a **Loaded** panel counting skills · prompts · extensions · mcp (with a global/project split) plus a `/loaded for details` hint; off falls back to the one-line `✻ Welcome to Pi` header | `claudeHeaderEnabled` | `true` | reload |
+| Quiet startup | Sets Pi's native `quietStartup` (in `~/.pi/agent/settings.json`) to hide the startup resource listing — use `/loaded` to see it on demand. The wizard defaults this on when the header is enabled | `quietStartup` | `false` | next session |
+| `/loaded` command | Always registered — prints loaded skills, prompts, extensions, themes and MCP servers, grouped global vs project | — (always on) | on | — |
 | Session commands | `/exit` (clean shutdown) and `/clear` (alias for `/new`; replaces the `pi-clear` npm package) | `sessionCommandsEnabled` | `true` | reload |
 | Copy command | `/copy-code` — Claude-style picker to copy the last response or one of its code blocks to the clipboard | `copyCommandEnabled` | `true` | reload |
 | Image paster | Clipboard images and pasted image paths become first-class attachments (bundled `pi-paster`) | `imagePasterEnabled` | `true` | reload |
@@ -379,7 +381,7 @@ cc-my-pi is not an original work — it stands on these projects:
 | `extensions/queue-steer/` (vendored, adapted) | [tmustier/pi-queue-steer](https://github.com/tmustier/pi-queue-steer) | Thomas Mustier | MIT |
 | `extensions/esc-steer.ts` (vendored, adapted) | `pi-esc-steer` | Thomas Mustier | MIT |
 | `extensions/double-esc-clear.ts` (vendored, adapted) | [`@thisux/pi-double-esc-clear`](https://www.npmjs.com/package/@thisux/pi-double-esc-clear) v1.0.3 | [Sanju](https://sanju.sh/) | MIT |
-| `extensions/claude-header/` (vendored, adapted — header only) | [Phoobobo/pi-claude-code-tui](https://github.com/Phoobobo/pi-claude-code-tui) v0.1.10 | Phoobobo | MIT |
+| `extensions/claude-header/` (forked — header only; layout, π mascot and Loaded panel are original cc-my-pi work) | [Phoobobo/pi-claude-code-tui](https://github.com/Phoobobo/pi-claude-code-tui) v0.1.10 | Phoobobo | MIT |
 | Visual design reference | [Claude Code](https://github.com/anthropics/claude-code) (Anthropic) — glyphs, colors, and layout re-implemented, no code copied | — | — |
 | Syntax highlighting | [Shiki](https://shiki.style) (`@shikijs/cli`) | Shiki contributors | MIT |
 | Diff engine | [jsdiff](https://github.com/kpdecker/jsdiff) (`diff`) | Kevin Decker & contributors | BSD-3-Clause |

@@ -7,13 +7,30 @@
 
 ### Added
 
-- **Animated startup header** — vendored from
+- **Redesigned startup header** — forked from
   [`pi-claude-code-tui`](https://github.com/Phoobobo/pi-claude-code-tui) (MIT,
-  Phoobobo; header only, no editor box): a boxed Pi-logo header with an
-  animated mark, model/effort/cwd, and a slash-command tips column. Toggled
-  with `claudeHeaderEnabled` (default `true`, `/reload` to change); off falls
-  back to the one-line `✻ Welcome to Pi` header. Don't install
-  `npm:pi-claude-code-tui` alongside — the header is already bundled.
+  Phoobobo; header only, no editor box) and reworked to Claude Code proportions:
+  a narrow left column with an animated **π mascot** (the π *is* the creature —
+  a top bar with two legs and blinking eyes, drawn in fine half-block glyphs)
+  above model/effort/cwd, and a wide right column with a **Loaded** panel
+  counting skills · prompts · extensions · mcp (with a global/project split) and
+  a `/loaded for details` hint (plus `/context to view current context` when
+  that command is available). Toggled with `claudeHeaderEnabled` (default
+  `true`, `/reload` to change); off falls back to the one-line
+  `✻ Welcome to Pi` header. Don't install `npm:pi-claude-code-tui` alongside —
+  the header is already bundled. The module is now a FORK (attribution kept, no
+  longer synced from upstream).
+
+- **`/loaded` command** — always registered (independent of the header setting):
+  prints the loaded skills, prompts, extensions, themes and MCP servers, grouped
+  global vs project, using Pi's own resource loader so the counts match Pi's
+  native startup listing.
+
+- **Quiet startup** setting (`quietStartup`) — a row in the `/cc-my-pi` panel and
+  the setup wizard that sets Pi's native `quietStartup` key in
+  `~/.pi/agent/settings.json`, hiding Pi's startup resource listing (use
+  `/loaded` instead). Takes effect next session; the wizard defaults it on when
+  the header is enabled.
 
 - **Optional companion packages** — six MIT-licensed standalone packages
   (`pi-context-view`, `pi-mcp-adapter`, `pi-subagents`, `pi-dynamic-workflows`,
