@@ -2311,14 +2311,19 @@ function patchAssistantMessages(): void {
 	const originalRender = proto.render;
 	if (typeof originalRender === "function" && !proto[ASSISTANT_RENDER_PATCH_FLAG]) {
 		proto.render = function patchedAssistantMessageRender(width: number) {
-			const cached = messageRenderCacheHit(this, width);
+			// Esc abort-and-continue (queue-steer): the marker lands on the message
+			// AFTER the abort has already been rendered and cached, so marked
+			// messages bypass the cache — otherwise the stale "Operation aborted"
+			// line is served from cache forever.
+			const escContinueMarked = Boolean((this as any).lastMessage?.[ESC_CONTINUE_ABORT_KEY]);
+			const cached = escContinueMarked ? null : messageRenderCacheHit(this, width);
 			if (cached) return cached;
 			let lines = originalRender.call(this, width);
 			if (!Array.isArray(lines) || lines.length === 0) return lines;
-			// Esc abort-and-continue (queue-steer): the queued message sends right
-			// after this abort, so the red "Operation aborted" line only confuses.
-			// Real user cancels are not marked and keep the message.
-			if ((this as any).lastMessage?.[ESC_CONTINUE_ABORT_KEY]) {
+			// The queued message sends right after this abort, so the red
+			// "Operation aborted" line only confuses. Real user cancels are not
+			// marked and keep the message.
+			if (escContinueMarked) {
 				const filtered = lines.filter(
 					(line: string) => line.replace(/\x1b\[[0-9;]*m/g, "").trim() !== "Operation aborted",
 				);
