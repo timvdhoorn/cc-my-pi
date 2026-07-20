@@ -29,6 +29,12 @@
 
 ### Changed
 
+- **Statusline git segment shows the line diffstat** — the git segment now
+  renders `+N` (green) `−N` (red) insertions/deletions versus `HEAD`, matching
+  Claude Code's statusline, in place of the `N files changed` count. The
+  thinking level (e.g. `(low)`) is color-coded with Pi's own `thinking*` theme
+  keys, so it matches the editor-border color for that level and follows any
+  theme.
 - **Wizard layout is now jump-free** — every frame renders to one constant
   height, so cycling a value (`←/→`) no longer shifts lines vertically.
 - **Wizard shows your current value as the selected default on every step**,

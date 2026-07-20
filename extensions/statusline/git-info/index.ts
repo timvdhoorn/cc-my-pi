@@ -37,6 +37,18 @@ function countChangedFiles(status: string) {
   return status.split("\n").filter(Boolean).length;
 }
 
+export function parseShortstat(stdout: string): {
+  insertions: number;
+  deletions: number;
+} {
+  const insertions = /(\d+) insertion/.exec(stdout);
+  const deletions = /(\d+) deletion/.exec(stdout);
+  return {
+    insertions: insertions ? Number.parseInt(insertions[1]!, 10) : 0,
+    deletions: deletions ? Number.parseInt(deletions[1]!, 10) : 0,
+  };
+}
+
 export function parseAheadBehind(
   code: number,
   stdout: string,
@@ -134,6 +146,7 @@ export default function gitInfo(pi: ExtensionAPI) {
           gitDirResult,
           aheadBehindResult,
           lastCommitResult,
+          shortstatResult,
         ] = yield* Effect.all(
           [
             run("git", ["branch", "--show-current"], ctx, GIT_TIMEOUT_MS),
@@ -157,6 +170,7 @@ export default function gitInfo(pi: ExtensionAPI) {
               GIT_TIMEOUT_MS,
             ),
             run("git", ["log", "-1", "--format=%ct"], ctx, GIT_TIMEOUT_MS),
+            run("git", ["diff", "--shortstat", "HEAD"], ctx, GIT_TIMEOUT_MS),
           ],
           { concurrency: "unbounded" },
         );
@@ -190,6 +204,9 @@ export default function gitInfo(pi: ExtensionAPI) {
             aheadBehindResult.code,
             aheadBehindResult.stdout,
           ),
+          ...(shortstatResult.code === 0
+            ? parseShortstat(shortstatResult.stdout)
+            : { insertions: 0, deletions: 0 }),
           lastCommitTs: (() => {
             const ts = Number(lastCommitResult.stdout.trim());
             return lastCommitResult.code === 0 &&

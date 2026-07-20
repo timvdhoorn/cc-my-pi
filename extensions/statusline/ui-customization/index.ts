@@ -53,6 +53,19 @@ const PEACH = "\x1b[0;1;38;2;250;179;135m";
 const MAROON = "\x1b[0;1;38;2;235;160;172m";
 const RED = "\x1b[0;1;38;2;243;139;168m";
 const SKY = "\x1b[0;1;38;2;137;220;235m";
+
+type ThemeColor = Parameters<ExtensionContext["ui"]["theme"]["fg"]>[0];
+
+// Match the editor-border thinking colors (Pi's own theme keys).
+const THINKING_THEME_KEY: Record<string, ThemeColor> = {
+  off: "thinkingOff",
+  minimal: "thinkingMinimal",
+  low: "thinkingLow",
+  medium: "thinkingMedium",
+  high: "thinkingHigh",
+  xhigh: "thinkingXhigh",
+  max: "thinkingMax",
+};
 const ANSI_PATTERN =
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[a-zA-Z\d]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
@@ -234,10 +247,19 @@ export default function uiCustomization(pi: ExtensionAPI) {
           const textC = (t: string) => (claude ? `${TEXT}${t}${RESET}` : theme.fg("text", t));
           const accent = (t: string) => (claude ? `${MAUVE}${t}${RESET}` : theme.fg("accent", t));
           const muted = (t: string) => (claude ? `${GRAY}${t}${RESET}` : theme.fg("muted", t));
+          const thinkingColored = (level: string) => {
+            const key = THINKING_THEME_KEY[level];
+            return key ? theme.fg(key, level) : gray(level);
+          };
+
+          const diffAdd = (t: string) =>
+            claude ? `${GREEN}${t}${RESET}` : theme.fg("success", t);
+          const diffDel = (t: string) =>
+            claude ? `${RED}${t}${RESET}` : theme.fg("error", t);
 
           const directory = muted(formatDirectory(ctx.cwd));
-          const fileLabel = gitInfo.changedFiles === 1 ? "file" : "files";
           let git = "";
+          let diffstat = "";
           if (gitInfo.branch) {
             const statusIcon = gitInfo.hasConflicts
               ? "⚠"
@@ -250,7 +272,10 @@ export default function uiCustomization(pi: ExtensionAPI) {
               if (gitInfo.ahead > 0) sync += ` ↑${gitInfo.ahead}`;
               if (gitInfo.behind > 0) sync += ` ↓${gitInfo.behind}`;
             }
-            git = `${gitInfo.branch} ${statusIcon}${sync} · ${gitInfo.changedFiles} ${fileLabel} changed`;
+            git = `${gitInfo.branch} ${statusIcon}${sync}`;
+            if (gitInfo.insertions > 0 || gitInfo.deletions > 0) {
+              diffstat = ` ${diffAdd(`+${gitInfo.insertions}`)} ${diffDel(`-${gitInfo.deletions}`)}`;
+            }
           }
 
           if (gitInfo.pullRequest) {
@@ -283,7 +308,9 @@ export default function uiCustomization(pi: ExtensionAPI) {
           const model = modelInfo.provider
             ? `${modelInfo.provider}/${modelInfo.modelId}`
             : modelInfo.modelId;
-          const thinking = modelInfo.thinking ? ` (${modelInfo.thinking})` : "";
+          const thinking = modelInfo.thinking
+            ? ` ${gray("(")}${thinkingColored(modelInfo.thinking)}${gray(")")}`
+            : "";
           const cacheHit =
             modelInfo.latestCacheHitRate === null
               ? ""
@@ -304,8 +331,10 @@ export default function uiCustomization(pi: ExtensionAPI) {
           const statusLine = selectedStatuses.join(gray(" | "));
 
           const separator = gray(" | ");
-          const modelAndUsage = `${textC(model)}${gray(thinking)}${separator}${usage}`;
-          let directoryAndGit = git ? `${directory}${separator}${accent(git)}` : directory;
+          const modelAndUsage = `${textC(model)}${thinking}${separator}${usage}`;
+          let directoryAndGit = git
+            ? `${directory}${separator}${accent(git)}${diffstat}`
+            : directory;
           if (sl.statuslineShowWorktree && gitInfo.worktreeName) {
             directoryAndGit += `${separator}${GRAY}wt ${YELLOW}${gitInfo.worktreeName}${RESET}`;
           }

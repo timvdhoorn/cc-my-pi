@@ -31,6 +31,8 @@ export interface GitInfoState {
   hasConflicts: boolean;
   ahead: number | null;
   behind: number | null;
+  insertions: number;
+  deletions: number;
   lastCommitTs: number | null;
 }
 
@@ -60,6 +62,8 @@ export function emptyGitInfoState(): GitInfoState {
     hasConflicts: false,
     ahead: null,
     behind: null,
+    insertions: 0,
+    deletions: 0,
     lastCommitTs: null,
   };
 }
@@ -112,6 +116,8 @@ export function isGitInfoState(value: unknown): value is GitInfoState {
     typeof value.hasConflicts === "boolean" &&
     isNullableNumber(value.ahead) &&
     isNullableNumber(value.behind) &&
+    typeof value.insertions === "number" &&
+    typeof value.deletions === "number" &&
     isNullableNumber(value.lastCommitTs)
   );
 }

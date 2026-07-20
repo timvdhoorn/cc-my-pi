@@ -102,7 +102,7 @@ same file.
 | Theme-adaptive palette | Borders, branch connectors, dim text, spinner accent, and diff backgrounds follow the active pi theme | `themeAdaptive` | `true` | live |
 | Grouped tool calls | Adjacent/concurrent tool calls collapse under a compact status header | `groupToolCalls` | `true` | live |
 | Live tool preview | A few output lines shown for still-running tool calls | `liveToolPreview` | `true` | live |
-| Statusline | Bundled footer module: model/ctx gauge, git segment, MCP status. Sub-settings `statuslineCtxStyle` (context gauge style) and `statuslineShowWorktree` (`wt <name>` segment) apply live (≤5s) | `statuslineEnabled` (module on/off), `statuslineCtxStyle`, `statuslineShowWorktree` | `true`, `"claude"`, `true` | `statuslineEnabled` reload; sub-settings live (≤5s) |
+| Statusline | Bundled footer module: model/ctx gauge, git segment (with the `+N −N` line diffstat), MCP status, and a thinking level color-coded to match the editor border. Sub-settings `statuslineCtxStyle` (context gauge style) and `statuslineShowWorktree` (`wt <name>` segment) apply live (≤5s) | `statuslineEnabled` (module on/off), `statuslineCtxStyle`, `statuslineShowWorktree` | `true`, `"claude"`, `true` | `statuslineEnabled` reload; sub-settings live (≤5s) |
 
 One example per module — set just the key(s) you want to change:
 

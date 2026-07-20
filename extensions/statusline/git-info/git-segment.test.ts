@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { hasConflictMarkers, parseAheadBehind } from "./index.ts";
+import {
+  hasConflictMarkers,
+  parseAheadBehind,
+  parseShortstat,
+} from "./index.ts";
 import { formatAgo } from "../ui-customization/index.ts";
 
 describe("parseAheadBehind", () => {
@@ -35,6 +39,33 @@ describe("hasConflictMarkers", () => {
 
   it("returns false for empty status", () => {
     assert.equal(hasConflictMarkers(""), false);
+  });
+});
+
+describe("parseShortstat", () => {
+  it("parses insertions and deletions", () => {
+    assert.deepEqual(
+      parseShortstat(" 3 files changed, 3722 insertions(+), 272 deletions(-)"),
+      { insertions: 3722, deletions: 272 },
+    );
+  });
+
+  it("parses insertions only", () => {
+    assert.deepEqual(parseShortstat(" 1 file changed, 1 insertion(+)"), {
+      insertions: 1,
+      deletions: 0,
+    });
+  });
+
+  it("parses deletions only", () => {
+    assert.deepEqual(parseShortstat(" 1 file changed, 5 deletions(-)"), {
+      insertions: 0,
+      deletions: 5,
+    });
+  });
+
+  it("returns zeros for a clean tree", () => {
+    assert.deepEqual(parseShortstat(""), { insertions: 0, deletions: 0 });
   });
 });
 
