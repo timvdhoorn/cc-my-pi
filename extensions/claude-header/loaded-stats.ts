@@ -4,12 +4,22 @@
  * Counts and lists what Pi actually loaded — skills, prompts, extensions,
  * themes and MCP servers — using Pi core's own `DefaultResourceLoader` so the
  * numbers match Pi's native startup listing exactly (no hand-rolled directory
- * scans). MCP servers come from the pi-mcp-adapter config files (`mcp.json`).
+ * scans).
+ *
+ * MCP servers mirror pi-mcp-adapter's own config resolution (config.ts) —
+ * shared-global (`~/.config/mcp/mcp.json`), pi-global (`<agentDir>/mcp.json`),
+ * shared-project (`<cwd>/.mcp.json`) and pi-project (`<cwd>/.pi/mcp.json`),
+ * plus `imports` expansion (cursor/claude-code/claude-desktop/codex/windsurf/
+ * vscode) — so the count matches what the adapter actually loads, not just
+ * the two pi-owned files. Counting is gated on the adapter being installed
+ * (`mcp` command registered); otherwise MCP is omitted entirely, even if
+ * config files exist.
  *
  * A single module-level promise is shared: the header kicks it off and `/loaded`
  * reuses it, so the filesystem scan happens once per process.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { DefaultResourceLoader, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -25,7 +35,7 @@ export interface LoadedStats {
 	prompts: { user: number; project: number };
 	extensions: { user: number; project: number };
 	themes: { user: number; project: number };
-	/** Total MCP servers across global + project `mcp.json`. */
+	/** Total unique MCP servers across all pi-mcp-adapter sources (0 when the adapter isn't installed). */
 	mcpServers: number;
 	/** Full name lists retained for `/loaded` rendering. */
 	detail: {
@@ -53,8 +63,153 @@ export type LoaderFactory = (opts: { cwd: string; agentDir: string }) => Resourc
 export interface CollectOptions {
 	/** Inject a stub loader for tests; production uses DefaultResourceLoader. */
 	loaderFactory?: LoaderFactory;
-	/** Override MCP config paths for tests; production derives them from cwd/agentDir. */
-	mcpPaths?: string[];
+	/** Override MCP resolution paths for tests; production derives them from cwd/agentDir/homedir. */
+	mcpPaths?: Partial<McpResolutionPaths>;
+}
+
+/** MCP `imports` kinds pi-mcp-adapter supports (config.ts `ImportKind`). */
+type ImportKind = "cursor" | "claude-code" | "claude-desktop" | "codex" | "windsurf" | "vscode";
+
+const IMPORT_KINDS: ImportKind[] = ["cursor", "claude-code", "claude-desktop", "codex", "windsurf", "vscode"];
+
+/** vscode's import path is project-relative; every other import kind is homedir-based (global). */
+const IMPORT_SCOPE: Record<ImportKind, "global" | "project"> = {
+	cursor: "global",
+	"claude-code": "global",
+	"claude-desktop": "global",
+	codex: "global",
+	windsurf: "global",
+	vscode: "project",
+};
+
+/** Homedir/cwd-derived MCP config paths, mirroring pi-mcp-adapter's `config.ts`. */
+export interface McpResolutionPaths {
+	sharedGlobal: string;
+	sharedProject: string;
+	piProject: string;
+	cursor: string;
+	claudeCode: string[];
+	claudeDesktop: string;
+	codex: string;
+	windsurf: string;
+	vscode: string;
+}
+
+function defaultMcpResolutionPaths(cwd: string): McpResolutionPaths {
+	const home = homedir();
+	return {
+		sharedGlobal: join(home, ".config", "mcp", "mcp.json"),
+		sharedProject: join(cwd, ".mcp.json"),
+		piProject: join(cwd, ".pi", "mcp.json"),
+		cursor: join(home, ".cursor", "mcp.json"),
+		claudeCode: [
+			join(home, ".claude", "mcp.json"),
+			join(home, ".claude.json"),
+			join(home, ".claude", "claude_desktop_config.json"),
+		],
+		claudeDesktop: join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"),
+		codex: join(home, ".codex", "config.json"),
+		windsurf: join(home, ".windsurf", "mcp.json"),
+		vscode: join(cwd, ".vscode", "mcp.json"),
+	};
+}
+
+interface RawMcpFile {
+	mcpServers?: Record<string, unknown>;
+	imports?: string[];
+}
+
+/** Parse a `{ mcpServers?, imports? }` file; missing/corrupt → undefined, never throw. */
+function readMcpFile(path: string): RawMcpFile | undefined {
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as RawMcpFile;
+	} catch {
+		// missing file / parse error → skip
+	}
+	return undefined;
+}
+
+function serverNamesOf(file: RawMcpFile | undefined): string[] {
+	const servers = file?.mcpServers;
+	if (servers && typeof servers === "object" && !Array.isArray(servers)) return Object.keys(servers);
+	return [];
+}
+
+function importKindsOf(file: RawMcpFile | undefined): ImportKind[] {
+	if (!Array.isArray(file?.imports)) return [];
+	return file.imports.filter((k): k is ImportKind => (IMPORT_KINDS as string[]).includes(k));
+}
+
+function importCandidates(kind: ImportKind, paths: McpResolutionPaths): string[] {
+	switch (kind) {
+		case "cursor":
+			return [paths.cursor];
+		case "claude-code":
+			return paths.claudeCode;
+		case "claude-desktop":
+			return [paths.claudeDesktop];
+		case "codex":
+			return [paths.codex];
+		case "windsurf":
+			return [paths.windsurf];
+		case "vscode":
+			return [paths.vscode];
+	}
+}
+
+/** First existing candidate for an import kind (adapter's `resolveImportPath`). */
+function resolveImportPath(kind: ImportKind, paths: McpResolutionPaths): string | undefined {
+	return importCandidates(kind, paths).find((candidate) => existsSync(candidate));
+}
+
+/**
+ * Count + list MCP servers across all sources pi-mcp-adapter resolves: the
+ * two pi-owned files, the two shared files, plus any `imports` any of those
+ * four files declare. Names are deduped overall; on a global/project name
+ * collision the project entry wins (mirrors the adapter's merge order, where
+ * project sources are merged last and override same-named global ones).
+ * Returns nothing at all when the adapter isn't installed (`hasMcpAdapter`).
+ */
+function collectMcpServers(
+	cwd: string,
+	agentDir: string,
+	hasMcpAdapter: boolean,
+	overridePaths?: Partial<McpResolutionPaths>,
+): { total: number; detail: CategoryDetail } {
+	if (!hasMcpAdapter) return { total: 0, detail: { global: [], project: [] } };
+
+	const paths: McpResolutionPaths = { ...defaultMcpResolutionPaths(cwd), ...overridePaths };
+	const piGlobalPath = join(agentDir, "mcp.json");
+
+	const sharedGlobal = readMcpFile(paths.sharedGlobal);
+	const piGlobal = readMcpFile(piGlobalPath);
+	const sharedProject = readMcpFile(paths.sharedProject);
+	const piProject = readMcpFile(paths.piProject);
+
+	const globalNames = new Set<string>([...serverNamesOf(sharedGlobal), ...serverNamesOf(piGlobal)]);
+	const projectNames = new Set<string>([...serverNamesOf(sharedProject), ...serverNamesOf(piProject)]);
+
+	const declaredImports = new Set<ImportKind>([
+		...importKindsOf(sharedGlobal),
+		...importKindsOf(piGlobal),
+		...importKindsOf(sharedProject),
+		...importKindsOf(piProject),
+	]);
+
+	for (const kind of declaredImports) {
+		const importPath = resolveImportPath(kind, paths);
+		if (!importPath) continue;
+		const bucket = IMPORT_SCOPE[kind] === "project" ? projectNames : globalNames;
+		for (const name of serverNamesOf(readMcpFile(importPath))) bucket.add(name);
+	}
+
+	for (const name of projectNames) globalNames.delete(name);
+
+	return {
+		total: globalNames.size + projectNames.size,
+		detail: { global: [...globalNames].sort(), project: [...projectNames].sort() },
+	};
 }
 
 /** Pi's default agent dir (`~/.pi/agent`), honoring any env override core supports. */
@@ -91,21 +246,14 @@ function extensionLabel(ext: { path?: string; resolvedPath?: string; sourceInfo?
 	return path ? basename(path) : "extension";
 }
 
-/** Parse `mcpServers` keys from a single mcp.json; missing/corrupt → []. */
-function readMcpServerNames(path: string): string[] {
-	try {
-		const parsed = JSON.parse(readFileSync(path, "utf8")) as { mcpServers?: unknown };
-		const servers = parsed?.mcpServers;
-		if (servers && typeof servers === "object") return Object.keys(servers);
-	} catch {
-		// missing file / parse error → no servers, never throw
-	}
-	return [];
-}
-
 let statsPromise: Promise<LoadedStats> | undefined;
 
-async function doCollect(cwd: string, agentDir: string, options?: CollectOptions): Promise<LoadedStats> {
+async function doCollect(
+	cwd: string,
+	agentDir: string,
+	hasMcpAdapter: boolean,
+	options?: CollectOptions,
+): Promise<LoadedStats> {
 	const loader: ResourceLoaderLike = options?.loaderFactory
 		? options.loaderFactory({ cwd, agentDir })
 		: new DefaultResourceLoader({ cwd, agentDir });
@@ -132,22 +280,20 @@ async function doCollect(cwd: string, agentDir: string, options?: CollectOptions
 		(t) => t.sourceInfo?.scope,
 	);
 
-	const [globalMcp, projectMcp] = options?.mcpPaths
-		? [options.mcpPaths[0] ? readMcpServerNames(options.mcpPaths[0]) : [], options.mcpPaths[1] ? readMcpServerNames(options.mcpPaths[1]) : []]
-		: [readMcpServerNames(join(agentDir, "mcp.json")), readMcpServerNames(join(cwd, ".pi", "mcp.json"))];
+	const mcp = collectMcpServers(cwd, agentDir, hasMcpAdapter, options?.mcpPaths);
 
 	return {
 		skills: { user: skills.user, project: skills.project },
 		prompts: { user: prompts.user, project: prompts.project },
 		extensions: { user: extensions.user, project: extensions.project },
 		themes: { user: themes.user, project: themes.project },
-		mcpServers: globalMcp.length + projectMcp.length,
+		mcpServers: mcp.total,
 		detail: {
 			skills: skills.detail,
 			prompts: prompts.detail,
 			extensions: extensions.detail,
 			themes: themes.detail,
-			mcp: { global: globalMcp, project: projectMcp },
+			mcp: mcp.detail,
 		},
 	};
 }
@@ -155,11 +301,17 @@ async function doCollect(cwd: string, agentDir: string, options?: CollectOptions
 /**
  * Collect loaded-resource stats, shared process-wide. First caller starts the
  * scan; the header and `/loaded` reuse the same promise. A failed collection
- * clears the cache so a later call can retry.
+ * clears the cache so a later call can retry. `hasMcpAdapter` gates MCP
+ * counting entirely — pass `pi.getCommands().some((c) => c.name === "mcp")`.
  */
-export function collectLoadedStats(cwd: string, agentDir: string, options?: CollectOptions): Promise<LoadedStats> {
+export function collectLoadedStats(
+	cwd: string,
+	agentDir: string,
+	hasMcpAdapter: boolean,
+	options?: CollectOptions,
+): Promise<LoadedStats> {
 	if (!statsPromise) {
-		statsPromise = doCollect(cwd, agentDir, options).catch((err) => {
+		statsPromise = doCollect(cwd, agentDir, hasMcpAdapter, options).catch((err) => {
 			statsPromise = undefined;
 			throw err;
 		});
@@ -209,7 +361,8 @@ export function registerLoadedCommand(pi: ExtensionAPI): void {
 		description: "Show loaded skills, prompts, extensions, themes and MCP servers",
 		handler: async (_args, ctx) => {
 			try {
-				const stats = await collectLoadedStats(ctx.cwd, resolveAgentDir());
+				const hasMcpAdapter = pi.getCommands().some((c) => c.name === "mcp");
+				const stats = await collectLoadedStats(ctx.cwd, resolveAgentDir(), hasMcpAdapter);
 				pi.sendMessage({ customType: "cc-my-pi-loaded", content: renderLoadedMessage(stats), display: true });
 			} catch (err) {
 				const message = `/loaded could not read resources: ${err instanceof Error ? err.message : String(err)}`;

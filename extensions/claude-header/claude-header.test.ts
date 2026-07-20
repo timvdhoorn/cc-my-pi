@@ -10,7 +10,7 @@ import { collectLoadedStats, resetLoadedStatsCache } from "./loaded-stats.ts";
  */
 function seedStats(): void {
 	resetLoadedStatsCache();
-	collectLoadedStats("/t", "/t", {
+	collectLoadedStats("/t", "/t", false, {
 		loaderFactory: () => ({
 			reload: async () => {},
 			getSkills: () => ({ skills: [] }),
@@ -18,7 +18,6 @@ function seedStats(): void {
 			getExtensions: () => ({ extensions: [] }),
 			getThemes: () => ({ themes: [] }),
 		}),
-		mcpPaths: [],
 	});
 }
 
