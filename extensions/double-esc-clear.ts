@@ -94,12 +94,14 @@ export function registerBundledDoubleEscClear(
 		hintTimer = setTimeout(hideHint, DOUBLE_ESC_MS);
 	};
 
-	pi.on("session_start", (_event, ctx) => {
+	let installTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const installEditor = (ctx: ExtensionContext): void => {
 		if (ctx.mode !== "tui") return;
 
 		const previous = ctx.ui.getEditorComponent();
 		const features = editorFeatures(previous);
-		// Dedup: another bundled copy already wrapped this factory chain.
+		// Dedup: we are already in this factory chain.
 		if (features.has(FEATURE)) return;
 
 		const factory = ((tui, theme, keybindings: KeybindingsManager) => {
@@ -169,9 +171,35 @@ export function registerBundledDoubleEscClear(
 		}) as ComposedEditorFactory;
 		factory[EDITOR_FEATURES] = new Set([...features, FEATURE]);
 		ctx.ui.setEditorComponent(factory);
+	};
+
+	// Some extensions (e.g. pi-raw-paste) REPLACE the editor factory at
+	// session_start without chaining the previous one, and handler order is
+	// not guaranteed — a single immediate install can be silently discarded.
+	// Install immediately AND on a later tick (and again on agent_start),
+	// like esc-steer/queue-steer do; the EDITOR_FEATURES marker makes
+	// re-installs idempotent.
+	const scheduleInstall = (ctx: ExtensionContext): void => {
+		if (installTimer) clearTimeout(installTimer);
+		installTimer = setTimeout(() => {
+			installTimer = undefined;
+			installEditor(ctx);
+		}, 0);
+	};
+
+	pi.on("session_start", (_event, ctx) => {
+		installEditor(ctx);
+		scheduleInstall(ctx);
+	});
+
+	pi.on("agent_start", (_event, ctx) => {
+		installEditor(ctx);
+		scheduleInstall(ctx);
 	});
 
 	pi.on("session_shutdown", () => {
+		if (installTimer) clearTimeout(installTimer);
+		installTimer = undefined;
 		hideHint();
 	});
 }
