@@ -169,8 +169,8 @@ const SETTING_ORDER: Array<{
 		current: (s) => (s.copyCommandEnabled ? "on" : "off"),
 		describe: (s) =>
 			s.copyCommandEnabled
-				? "/copy — pick full response or a code block to copy; off requires /reload"
-				: "/copy not registered (/reload required)",
+				? "/copy-code — pick full response or a code block to copy; off requires /reload"
+				: "/copy-code not registered (/reload required)",
 	},
 	{
 		id: "copyAlwaysFull",
@@ -179,8 +179,8 @@ const SETTING_ORDER: Array<{
 		current: (s) => (s.copyAlwaysFull ? "on" : "off"),
 		describe: (s) =>
 			s.copyAlwaysFull
-				? "/copy always copies the full response (picker skipped)"
-				: "/copy shows the content picker when the response has code blocks",
+				? "/copy-code always copies the full response (picker skipped)"
+				: "/copy-code shows the content picker when the response has code blocks",
 	},
 	{
 		id: "spinnerEnabled",

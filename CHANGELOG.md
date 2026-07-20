@@ -7,7 +7,7 @@
 
 ### Added
 
-- **/copy command** — Claude-style content picker (full response, per code
+- **/copy-code command** — Claude-style content picker (full response, per code
   block, always-full skip).
 
 - **Guided setup wizard** — `/cc-my-pi setup` walks through every setting one at

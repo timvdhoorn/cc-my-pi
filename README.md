@@ -76,7 +76,7 @@ same file.
 | Core tool rendering | Compact `read`/`bash`/`grep`/`find`/`ls`/`edit`/`write` rows, Claude-style OpenAI/`apply_patch` tools, minimal diff chrome, thinking labels, MCP-aware rendering | — (base module, always on while loaded) | on | — |
 | Spinner | Claude-style spinner verb + status text (falls back to Pi's stock spinner when off) | `spinnerEnabled` | `true` | reload |
 | Session commands | `/exit` (clean shutdown) and `/clear` (alias for `/new`; replaces the `pi-clear` npm package) | `sessionCommandsEnabled` | `true` | reload |
-| Copy command | `/copy` — Claude-style picker to copy the last response or one of its code blocks to the clipboard | `copyCommandEnabled` | `true` | reload |
+| Copy command | `/copy-code` — Claude-style picker to copy the last response or one of its code blocks to the clipboard | `copyCommandEnabled` | `true` | reload |
 | Image paster | Clipboard images and pasted image paths become first-class attachments (bundled `pi-paster`) | `imagePasterEnabled` | `true` | reload |
 | Esc steer | Esc while the agent runs aborts and auto-continues whatever was queued | `escSteerEnabled` | `true` | live |
 | Double-Esc clear | Double-Esc (within 800ms) on a non-empty idle draft clears it | `doubleEscClearEnabled` | `true` | live |
@@ -101,7 +101,7 @@ Disables the Claude-style spinner; Pi's stock spinner takes over after `/reload`
 ```json
 { "copyCommandEnabled": false }
 ```
-`/copy` is no longer registered after `/reload`. When enabled, `/copy` copies
+`/copy-code` is no longer registered after `/reload`. When enabled, `/copy-code` copies
 the last assistant response to the clipboard. If that response contains fenced
 code blocks it first shows a **Select content to copy** picker — the full
 response (with char/line count), each code block (labelled by language), and an

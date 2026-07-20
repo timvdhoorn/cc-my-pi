@@ -155,9 +155,9 @@ interface SettingsFile {
 	spinnerEnabled?: boolean;
 	/** /exit and /clear session commands. Defaults to true; reload required to change. */
 	sessionCommandsEnabled?: boolean;
-	/** /copy command (Claude-style content picker). Defaults to true; reload required to change. */
+	/** /copy-code command (Claude-style content picker). Defaults to true; reload required to change. */
 	copyCommandEnabled?: boolean;
-	/** /copy always copies the full response, skipping the picker. Defaults to false; read live. */
+	/** /copy-code always copies the full response, skipping the picker. Defaults to false; read live. */
 	copyAlwaysFull?: boolean;
 	/** Marker: guided first-run setup wizard has run once (auto-start suppressed after). */
 	ccMyPiSetupDone?: boolean;
@@ -6370,7 +6370,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			case "copyCommandEnabled": {
 				writeSettingsKey("copyCommandEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /copy change", "info");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /copy-code change", "info");
 				break;
 			}
 			case "copyAlwaysFull": {

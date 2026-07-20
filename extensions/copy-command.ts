@@ -1,5 +1,8 @@
 /**
- * /copy command — Claude Code-style "select content to copy" picker.
+ * /copy-code command — Claude Code-style "select content to copy" picker.
+ *
+ * Named /copy-code because Pi's interactive mode hardcodes /copy (plain
+ * full-response copy) and intercepts it before extension commands run.
  *
  * Own code (not vendored): built from the public Pi extension API only. The
  * owner's private `copy-all` extension (third party, unlicensed) is NOT a
@@ -103,7 +106,7 @@ export function registerCopyCommand(
 
 	const copyToClipboard = deps?.copyToClipboard ?? defaultCopyToClipboard;
 
-	pi.registerCommand("copy", {
+	pi.registerCommand("copy-code", {
 		description: "Copy the last response (or one of its code blocks) to the clipboard",
 		handler: async (_args, ctx) => {
 			await ctx.waitForIdle();

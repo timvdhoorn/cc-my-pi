@@ -46,7 +46,7 @@ function userEntry(content: unknown) {
 	return { type: "message", message: { role: "user", content } };
 }
 
-/** Register /copy and return the handler plus a recording clipboard fn. */
+/** Register /copy-code and return the handler plus a recording clipboard fn. */
 function makeHandler(
 	ctxOpts: Parameters<typeof makeCtx>[0],
 	settings?: { copyAlwaysFull?: boolean; setCopyAlwaysFull?: (v: boolean) => void },
@@ -74,7 +74,7 @@ function makeHandler(
 		},
 	);
 	const { ctx, notifies, selectCalls } = makeCtx(ctxOpts);
-	return { handler: commands.get("copy").handler, copied, setCalls, ctx, notifies, selectCalls };
+	return { handler: commands.get("copy-code").handler, copied, setCalls, ctx, notifies, selectCalls };
 }
 
 // --- extractCodeBlocks ------------------------------------------------------
@@ -157,7 +157,7 @@ test("buildPickerOptions: numbering, truncation, lang fallback, distinct duplica
 	assert.notEqual(options[1], options[3]);
 });
 
-// --- /copy handler ----------------------------------------------------------
+// --- /copy-code handler ----------------------------------------------------------
 
 test("copy: happy path shows picker and copies the chosen block", async () => {
 	const text = "here\n```js\nconst z = 2;\n```";
