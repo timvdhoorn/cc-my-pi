@@ -28,15 +28,15 @@ export const PI_MASCOT_WIDTH = 11;
 export const PI_MASCOT_ROW_COUNT = 4;
 
 // Raw glyph rows (unpainted). All exactly PI_MASCOT_WIDTH characters wide.
-const BAR_BASE = "▗▄▄▄▄▄▄▄▄▄▖"; // eyes closed (flat bar)
-const LEG_ROW = " ▐▌     ▐▌ ";
-const FEET_ROW = " ▝▘     ▝▚ "; // right foot curls (classic π)
+const BAR_BASE = "▐█████████▌"; // eyes closed (solid full-height bar)
+const LEG_ROW = " ▐██▌ ▐██▌ ";
+const FEET_ROW = " ▝██▘ ▝██▙ "; // right foot curls (classic π)
 const BLANK = " ".repeat(PI_MASCOT_WIDTH);
 
 /** Column indices on the bar row where the two eyes sit. */
 const EYE_COLS = [3, 7] as const;
-/** Glyph an open eye pokes up as (upper-half block over the lower-half bar). */
-const EYE_OPEN_GLYPH = "▀";
+/** Glyph an open eye shows as (lower-half block leaves a notch in the bar top). */
+const EYE_OPEN_GLYPH = "▄";
 
 interface FrameSpec {
 	legRows: 0 | 1 | 2;
