@@ -65,7 +65,9 @@ checklist for the embeds in the HTML comment above):
 4. First load auto-starts the guided setup wizard (`/cc-my-pi setup`). Its
    intro offers three choices: `enter` to start, `s` to skip for now (it
    re-opens next session), or `x` to not ask again. Re-run it any time with
-   `/cc-my-pi setup`.
+   `/cc-my-pi setup`. The wizard's final rows are the optional companion
+   packages (see [Goes well with](#goes-well-with)) — each shows its install
+   state and can be installed on the spot; skipping them is fine.
 
 To uninstall, remove the path from `packages` and `/reload`.
 
@@ -181,13 +183,22 @@ switcher), then `/reload`.
 ## Goes well with
 
 Not bundled (standalone npm packages, install via `packages` in
-`~/.pi/agent/settings.json`):
+`~/.pi/agent/settings.json`). Both `/cc-my-pi settings` and the setup wizard
+list these as optional companion rows with their install state (`✓ installed`
+/ `✗ not installed`); cycle a row to `⏎ install` to add just that one (it
+activates after `/reload`). Skipping is the default.
 
 - [`pi-context-view`](https://github.com/dimk90/pi-context-view)
   (`npm:pi-context-view`, MIT — Dmitry Makarov) — visualizes what fills the
   model's context and lets you inspect the normally hidden parts (base
   prompt, tool schemas, extension injections). Pairs nicely with the
   statusline's context gauge.
+- [`pi-mcp-adapter`](https://www.npmjs.com/package/pi-mcp-adapter)
+  (`npm:pi-mcp-adapter`, MIT) — adapter that lets Pi use MCP (Model Context
+  Protocol) servers, exposing their tools inside your session.
+- [`pi-subagents`](https://www.npmjs.com/package/pi-subagents)
+  (`npm:pi-subagents`, MIT) — delegate work to subagents with chained and
+  parallel execution and a TUI for clarifying questions.
 
 ## Configuration reference
 

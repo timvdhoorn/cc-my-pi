@@ -43,6 +43,7 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import {
+	COMPANION_INSTALL_VALUE,
 	openCcToolsSettingsPanel,
 	openCcToolsSetupWizard,
 	type BranchPreset,
@@ -52,6 +53,7 @@ import {
 	type SetupWizardOutcome,
 	type ToolStyle,
 } from "./cc-my-pi-settings-ui.js";
+import { COMPANION_PACKAGES, createPiPackagesFile } from "./companion-packages.js";
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerSessionCommands } from "./session-commands.js";
@@ -6221,6 +6223,8 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// /cc-my-pi command — control tool chrome, grouping, detail, and settings UI.
+	// Reader/writer for the optional companion packages in ~/.pi/agent/settings.json.
+	const piPackagesFile = createPiPackagesFile();
 	const getBranchPreset = (): BranchPreset => {
 		if (!toolBranchColorModeFixed()) return "theme";
 		const gray = getConfiguredToolBranchGray();
@@ -6263,9 +6267,27 @@ export default function (pi: ExtensionAPI) {
 			statuslineEnabled: settings.statuslineEnabled !== false,
 			statuslineCtxStyle: settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
 			statuslineShowWorktree: settings.statuslineShowWorktree !== false,
+			companionsInstalled: Object.fromEntries(
+				COMPANION_PACKAGES.map((c) => [c.source, piPackagesFile.isInstalled(c.source)]),
+			),
 		};
 	};
 	const applyCcToolsUiSetting = (id: string, value: string, ctx: any): void => {
+		if (id.startsWith("companion:")) {
+			if (value !== COMPANION_INSTALL_VALUE) return; // ignore display values
+			const source = id.slice("companion:".length);
+			try {
+				piPackagesFile.install(source);
+				if (ctx.hasUI) ctx.ui.notify(`Added ${source} — /reload to activate`, "info");
+			} catch (err) {
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						`Could not update ~/.pi/agent/settings.json: ${err instanceof Error ? err.message : String(err)}`,
+						"error",
+					);
+			}
+			return;
+		}
 		switch (id) {
 			case "toolBackground": {
 				if (value !== "outlines" && value !== "transparent" && value !== "default") return;

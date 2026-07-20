@@ -5,10 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
+  COMPANION_INSTALL_VALUE,
+  SETTING_ORDER,
   openCcToolsSetupWizard,
+  wizardStepValues,
   type CcToolsSettingsController,
   type CcToolsUiSnapshot,
 } from "./cc-my-pi-settings-ui.ts";
+import { COMPANION_PACKAGES } from "./companion-packages.ts";
 import spinnerSetup from "./spinner.ts";
 
 const ESC = "\x1b";
@@ -39,6 +43,7 @@ const baseSnapshot: CcToolsUiSnapshot = {
   diffCollapsedLines: "stock",
   statuslineCtxStyle: "claude",
   statuslineShowWorktree: true,
+  companionsInstalled: { "npm:pi-context-view": true },
 };
 
 /** Controller that reflects applied values back into the snapshot so def.current() advances. */
@@ -272,6 +277,92 @@ test("wizard: a custom out-of-list value is the selected default and cycles into
     ["spinnerVerbColor", "borderAccent"],
     "cycling lands on the first curated value",
   );
+});
+
+test("companions: one row per companion, ids companion:<source>, after regular rows", () => {
+  const companionRows = SETTING_ORDER.filter((def) => String(def.id).startsWith("companion:"));
+  assert.equal(companionRows.length, COMPANION_PACKAGES.length);
+  assert.deepEqual(
+    companionRows.map((def) => def.id),
+    COMPANION_PACKAGES.map((c) => `companion:${c.source}`),
+  );
+  assert.deepEqual(
+    companionRows.map((def) => def.label),
+    COMPANION_PACKAGES.map((c) => c.name),
+  );
+  // Placed after all regular settings rows: the tail of SETTING_ORDER is exactly
+  // the companion rows, and nothing before them is a companion.
+  const firstCompanion = SETTING_ORDER.findIndex((def) => String(def.id).startsWith("companion:"));
+  assert.equal(firstCompanion, SETTING_ORDER.length - COMPANION_PACKAGES.length);
+  for (let i = 0; i < firstCompanion; i++) {
+    assert.ok(!String(SETTING_ORDER[i]!.id).startsWith("companion:"));
+  }
+});
+
+test("companions: installed row shows ✓ installed, not-installed shows ✗ not installed", () => {
+  const snap: CcToolsUiSnapshot = {
+    ...baseSnapshot,
+    companionsInstalled: { "npm:pi-context-view": true },
+  };
+  const installed = SETTING_ORDER.find((def) => def.id === "companion:npm:pi-context-view")!;
+  const notInstalled = SETTING_ORDER.find((def) => def.id === "companion:npm:pi-subagents")!;
+  assert.equal(installed.current(snap), "✓ installed");
+  assert.equal(notInstalled.current(snap), "✗ not installed");
+});
+
+test("companions: wizardStepValues offers the install action; installed row keeps ✓ as current", () => {
+  const snap: CcToolsUiSnapshot = {
+    ...baseSnapshot,
+    companionsInstalled: { "npm:pi-context-view": true },
+  };
+  const installed = SETTING_ORDER.find((def) => def.id === "companion:npm:pi-context-view")!;
+  const notInstalled = SETTING_ORDER.find((def) => def.id === "companion:npm:pi-subagents")!;
+
+  const notInstalledValues = wizardStepValues(notInstalled, snap);
+  assert.ok(notInstalledValues.includes(COMPANION_INSTALL_VALUE), "install action offered");
+
+  const installedValues = wizardStepValues(installed, snap);
+  assert.ok(installedValues.includes(COMPANION_INSTALL_VALUE), "install action still offered");
+  assert.equal(installedValues[0], "✓ installed", "current value is the selected default");
+});
+
+/** Mirror of index.ts's companion apply-intercept, over a fake PackagesFile. */
+function applyCompanion(
+  id: string,
+  value: string,
+  packagesFile: { install: (source: string) => void },
+): void {
+  if (!id.startsWith("companion:")) return;
+  if (value !== COMPANION_INSTALL_VALUE) return;
+  packagesFile.install(id.slice("companion:".length));
+}
+
+test("companions: apply install action calls install once; other values are ignored", () => {
+  const installs: string[] = [];
+  const packagesFile = { install: (source: string) => installs.push(source) };
+
+  applyCompanion("companion:npm:pi-subagents", COMPANION_INSTALL_VALUE, packagesFile);
+  assert.deepEqual(installs, ["npm:pi-subagents"]);
+
+  applyCompanion("companion:npm:pi-subagents", "✗ not installed", packagesFile);
+  applyCompanion("companion:npm:pi-subagents", "✓ installed", packagesFile);
+  assert.deepEqual(installs, ["npm:pi-subagents"], "display values never install");
+});
+
+test("companions: wizard frame with companion rows keeps the constant height", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+  const introHeight = component.render(80).length;
+
+  component.handleInput("\r"); // into steps
+  advanceToStep(component, COMPANION_PACKAGES[0]!.name); // first companion row
+  assert.equal(component.render(80).length, introHeight, "companion row keeps the height");
+
+  advanceToStep(component, COMPANION_PACKAGES.at(-1)!.name); // last companion row
+  assert.equal(component.render(80).length, introHeight, "last companion row keeps the height");
 });
 
 /** Fake pi that records on() registrations. */

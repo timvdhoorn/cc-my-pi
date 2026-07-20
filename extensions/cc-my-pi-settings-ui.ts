@@ -7,6 +7,7 @@ import {
 	getKeybindings,
 	type SettingItem,
 } from "@earendil-works/pi-tui";
+import { COMPANION_PACKAGES } from "./companion-packages.ts";
 
 export type ToolStyle = "outlines" | "transparent" | "default";
 export type BranchPreset = "theme" | "fixed-72" | "fixed-110" | "fixed-40";
@@ -36,7 +37,12 @@ export interface CcToolsUiSnapshot {
 	statuslineEnabled: boolean;
 	statuslineCtxStyle: "claude" | "plain";
 	statuslineShowWorktree: boolean;
+	/** Install state per companion package, keyed by npm source (e.g. "npm:pi-context-view"). */
+	companionsInstalled: Record<string, boolean>;
 }
+
+/** Value that triggers a companion install when applied to a `companion:<source>` row. */
+export const COMPANION_INSTALL_VALUE = "⏎ install";
 
 export interface CcToolsSettingsController {
 	getSnapshot(): CcToolsUiSnapshot;
@@ -44,8 +50,8 @@ export interface CcToolsSettingsController {
 	apply(id: keyof CcToolsUiSnapshot | string, value: string, ctx: any): void;
 }
 
-const SETTING_ORDER: Array<{
-	id: keyof CcToolsUiSnapshot;
+export const SETTING_ORDER: Array<{
+	id: keyof CcToolsUiSnapshot | string;
 	label: string;
 	values: string[];
 	describe: (snap: CcToolsUiSnapshot) => string;
@@ -277,6 +283,22 @@ const SETTING_ORDER: Array<{
 				? "Show wt <name> when inside a git worktree"
 				: "Hide the worktree segment",
 	},
+	// Optional companion packages — rendered as rows in BOTH the panel and the
+	// wizard. Installed state is read-only from the UI (uninstall is out of scope):
+	// an installed row's "✓ installed" current value is outside `values`, so the
+	// consumers that guarantee the current value is present (wizardStepValues,
+	// SettingsList) still render it, and only the install action is ever applied.
+	...COMPANION_PACKAGES.map((c) => ({
+		id: `companion:${c.source}`,
+		label: c.name,
+		values: ["✗ not installed", COMPANION_INSTALL_VALUE],
+		current: (s: CcToolsUiSnapshot) =>
+			s.companionsInstalled[c.source] ? "✓ installed" : "✗ not installed",
+		describe: (s: CcToolsUiSnapshot) =>
+			s.companionsInstalled[c.source]
+				? `${c.blurb} — installed (optional companion package)`
+				: `${c.blurb} — optional; cycle to "${COMPANION_INSTALL_VALUE}" to add it (activates after /reload)`,
+	})),
 ];
 
 function boolLabel(on: boolean): string {
@@ -707,7 +729,7 @@ function truncateLine(text: string, width: number): string {
  * (e.g. a `#d77757` set via `/cc-my-pi spinner verb`). Cycling then starts from
  * the user's actual value instead of silently overwriting it from index 0.
  */
-function wizardStepValues(def: (typeof SETTING_ORDER)[number], snap: CcToolsUiSnapshot): string[] {
+export function wizardStepValues(def: (typeof SETTING_ORDER)[number], snap: CcToolsUiSnapshot): string[] {
 	const cur = def.current(snap);
 	return def.values.includes(cur) ? def.values : [cur, ...def.values];
 }

@@ -7,6 +7,15 @@
 
 ### Added
 
+- **Optional companion packages** — six MIT-licensed standalone packages
+  (`pi-context-view`, `pi-mcp-adapter`, `pi-subagents`, `pi-dynamic-workflows`,
+  `pi-tasks`, `rpiv-ask-user-question`) now appear as rows in both the
+  `/cc-my-pi settings` panel and the setup wizard, each showing its install
+  state (`✓ installed` / `✗ not installed`). Cycle a row to `⏎ install` to
+  append just that package to `~/.pi/agent/settings.json` (activates on the
+  next `/reload`); skipping is the default and nothing is installed by mashing
+  Enter through the wizard.
+
 - **Statusline module** — the model/ctx gauge, git segment and MCP status footer
   (previously the separate `packages/statusline` Pi package) is now bundled as a
   gated module, toggled with `statuslineEnabled` (default `true`, `/reload` to
