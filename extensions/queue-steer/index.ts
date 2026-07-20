@@ -169,8 +169,8 @@ class QueueTimelineWidget implements Component {
 			: this.paused
 				? `${submit} resume · ${dequeue} edit · ${interrupt} keep paused`
 				: lane === "steer"
-					? `${submit} steer/send next · ${interrupt} send · ${dequeue} edit`
-					: `${followUp} add follow-up · ${submit} send next · ${interrupt} send · ${dequeue} edit`;
+					? `${submit} steer/send next · ${interrupt} send now · ${dequeue} edit`
+					: `${followUp} add follow-up · ${submit} send next · ${interrupt} send now · ${dequeue} edit`;
 		lines.push(`${border("│")} ${fitCell(this.theme.fg("dim", help), cellWidth)} ${border("│")}`);
 		lines.push(border(`└${"─".repeat(width - 2)}┘`));
 	}
