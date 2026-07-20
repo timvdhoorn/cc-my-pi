@@ -53,6 +53,7 @@ import {
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
+import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -144,6 +145,8 @@ interface SettingsFile {
 	escSteerEnabled?: boolean;
 	/** Bundled double-Esc-clears-draft behavior. Defaults to true. */
 	doubleEscClearEnabled?: boolean;
+	/** Bundled pi-queue-steer (visible steering/follow-up queues). Defaults to true. */
+	queueSteerEnabled?: boolean;
 	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
 	statuslineCtxStyle?: "claude" | "plain";
 	/** Show the `wt <name>` statusline segment inside a git worktree. Defaults to true. */
@@ -1558,6 +1561,10 @@ function escSteerEnabled(): boolean {
 
 function doubleEscClearEnabled(): boolean {
 	return readSettings().doubleEscClearEnabled !== false;
+}
+
+function queueSteerEnabled(): boolean {
+	return readSettings().queueSteerEnabled !== false;
 }
 
 /** Assistant Markdown lists always use a plain "-" marker, like Claude Code. */
@@ -6155,6 +6162,7 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 export default function (pi: ExtensionAPI) {
 	registerBundledEscSteer(pi, escSteerEnabled);
 	registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
+	registerBundledQueueSteer(pi, queueSteerEnabled);
 	registerBundledImagePaster(pi, imagePasterEnabled());
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
@@ -6212,6 +6220,7 @@ export default function (pi: ExtensionAPI) {
 			imagePasterEnabled: imagePasterEnabled(),
 			escSteerEnabled: escSteerEnabled(),
 			doubleEscClearEnabled: doubleEscClearEnabled(),
+			queueSteerEnabled: queueSteerEnabled(),
 			branchPreset: getBranchPreset(),
 			readOutputMode,
 			bashOutputMode,
@@ -6265,6 +6274,10 @@ export default function (pi: ExtensionAPI) {
 			}
 			case "doubleEscClearEnabled": {
 				writeSettingsKey("doubleEscClearEnabled", value === "on");
+				break;
+			}
+			case "queueSteerEnabled": {
+				writeSettingsKey("queueSteerEnabled", value === "on");
 				break;
 			}
 			case "themeAdaptive": {

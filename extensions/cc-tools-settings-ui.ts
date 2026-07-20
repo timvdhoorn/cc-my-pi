@@ -22,6 +22,7 @@ export interface CcToolsUiSnapshot {
 	imagePasterEnabled: boolean;
 	escSteerEnabled: boolean;
 	doubleEscClearEnabled: boolean;
+	queueSteerEnabled: boolean;
 	branchPreset: BranchPreset;
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
@@ -124,6 +125,16 @@ const SETTING_ORDER: Array<{
 			s.doubleEscClearEnabled
 				? "Double-Esc on a non-empty idle draft clears it (like Claude Code)"
 				: "Double-Esc leaves a non-empty draft untouched",
+	},
+	{
+		id: "queueSteerEnabled",
+		label: "Queue steer",
+		values: ["on", "off"],
+		current: (s) => (s.queueSteerEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.queueSteerEnabled
+				? "Visible steering/follow-up queues with inline editing"
+				: "Queue steer disabled — no visible queue widget",
 	},
 	{
 		id: "themeAdaptive",
