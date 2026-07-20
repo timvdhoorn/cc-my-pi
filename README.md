@@ -10,6 +10,10 @@ closest to stock Pi.
 
 ## Screenshots
 
+**`/copy-code` content picker**
+
+![Copy picker](assets/screenshots/copy-picker.png)
+
 <!--
 Drop PNGs into assets/screenshots/ with the names below, then delete the
 matching checklist line — the embed uncomments itself by replacing this block:
