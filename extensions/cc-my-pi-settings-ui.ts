@@ -24,6 +24,8 @@ export interface CcToolsUiSnapshot {
 	doubleEscClearEnabled: boolean;
 	queueSteerEnabled: boolean;
 	branchPreset: BranchPreset;
+	spinnerVerbColor: string;
+	spinnerStatusColor: string;
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
 	diffCollapsedLines: number | "stock";
@@ -145,6 +147,26 @@ const SETTING_ORDER: Array<{
 			s.themeAdaptive
 				? "Borders/diffs/muted follow active pi theme"
 				: "Fixed Claude palette (ignore pi theme colors)",
+	},
+	{
+		id: "spinnerVerbColor",
+		label: "Spinner verb",
+		values: ["borderAccent", "accent", "success", "warning", "thinkingHigh", "mdHeading", "muted"],
+		current: (s) => s.spinnerVerbColor,
+		describe: (s) =>
+			s.spinnerVerbColor === "borderAccent"
+				? "Verb text (Cooking…) uses borderAccent (default) — more keys/hex: /cc-my-pi spinner"
+				: `Verb text (Cooking…) uses ${s.spinnerVerbColor} — more keys/hex: /cc-my-pi spinner`,
+	},
+	{
+		id: "spinnerStatusColor",
+		label: "Spinner status",
+		values: ["muted", "dim", "text", "borderAccent", "accent"],
+		current: (s) => s.spinnerStatusColor,
+		describe: (s) =>
+			s.spinnerStatusColor === "muted"
+				? "Status suffix ((thinking · 2s)) uses muted (default)"
+				: `Status suffix ((thinking · 2s)) uses ${s.spinnerStatusColor}`,
 	},
 	{
 		id: "liveToolPreview",

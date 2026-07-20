@@ -6222,6 +6222,8 @@ export default function (pi: ExtensionAPI) {
 			doubleEscClearEnabled: doubleEscClearEnabled(),
 			queueSteerEnabled: queueSteerEnabled(),
 			branchPreset: getBranchPreset(),
+			spinnerVerbColor: String(settings.spinnerVerbColor || "borderAccent"),
+			spinnerStatusColor: String(settings.spinnerStatusColor || "muted"),
 			readOutputMode,
 			bashOutputMode,
 			diffCollapsedLines: diffCollapsedLimit() ?? "stock",
@@ -6331,6 +6333,15 @@ export default function (pi: ExtensionAPI) {
 			case "statuslineShowWorktree": {
 				// Name-shared with the statusline package (no import); it re-reads on a 5s TTL.
 				writeSettingsKey("statuslineShowWorktree", value === "on");
+				break;
+			}
+			case "spinnerVerbColor":
+			case "spinnerStatusColor": {
+				if (!value) return;
+				// Default keys are stored as "unset" so /cc-my-pi spinner reset stays equivalent.
+				const def = id === "spinnerVerbColor" ? "borderAccent" : "muted";
+				writeSettingsKey(id, value === def ? undefined : value);
+				bustSpinnerSettingsCache();
 				break;
 			}
 			default:

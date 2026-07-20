@@ -141,7 +141,7 @@ Use `/cc-my-pi` to control tool UI at runtime:
 /cc-my-pi bullets toggle  # flip default ↔ dash
 ```
 
-The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, Esc continues queue, double-Esc clears draft, theme-adaptive, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
+The settings panel lists style, grouping, extra detail, branch color, list bullets, image paster, Esc continues queue, double-Esc clears draft, theme-adaptive, spinner verb/status colors, live preview, and read/bash output modes. Most changes apply immediately; changing Image paster requires `/reload`. The preview block under the list shows a mock tool tree for the current combination.
 
 `assistantListBulletStyle` only affects **assistant Markdown unordered lists** (the rows that this package restyles). Thinking blocks and user messages are unchanged.
 

@@ -15,10 +15,11 @@
   `/cc-my-pi theme on|off|toggle|status` and
   `/cc-my-pi spinner verb|status|preview|reset` (with completions); the
   standalone commands are removed.
+- **Settings panel** gains `Spinner verb` and `Spinner status` rows (curated
+  theme-key cycle; full key list and hex via `/cc-my-pi spinner`).
 - Added LICENSE (MIT, dual copyright) and a README "Credits & provenance"
   section attributing FammasMaz (base fork), Thomas Mustier (queue-steer,
   esc-steer), Sanju (double-esc-clear), and key dependencies.
-- No behavior changes.
 
 ### Added
 
