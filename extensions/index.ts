@@ -44,6 +44,7 @@ import {
 } from "@earendil-works/pi-tui";
 import {
 	openCcToolsSettingsPanel,
+	openCcToolsSetupWizard,
 	type BranchPreset,
 	type CcToolsSettingsController,
 	type CcToolsUiSnapshot,
@@ -147,6 +148,10 @@ interface SettingsFile {
 	doubleEscClearEnabled?: boolean;
 	/** Bundled pi-queue-steer (visible steering/follow-up queues). Defaults to true. */
 	queueSteerEnabled?: boolean;
+	/** Claude-style spinner module (verb + status suffix). Defaults to true; reload required to change. */
+	spinnerEnabled?: boolean;
+	/** Marker: guided first-run setup wizard has run once (auto-start suppressed after). */
+	ccMyPiSetupDone?: boolean;
 	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
 	statuslineCtxStyle?: "claude" | "plain";
 	/** Show the `wt <name>` statusline segment inside a git worktree. Defaults to true. */
@@ -6222,6 +6227,7 @@ export default function (pi: ExtensionAPI) {
 			doubleEscClearEnabled: doubleEscClearEnabled(),
 			queueSteerEnabled: queueSteerEnabled(),
 			branchPreset: getBranchPreset(),
+			spinnerEnabled: settings.spinnerEnabled !== false,
 			spinnerVerbColor: String(settings.spinnerVerbColor || "borderAccent"),
 			spinnerStatusColor: String(settings.spinnerStatusColor || "muted"),
 			readOutputMode,
@@ -6335,6 +6341,11 @@ export default function (pi: ExtensionAPI) {
 				writeSettingsKey("statuslineShowWorktree", value === "on");
 				break;
 			}
+			case "spinnerEnabled": {
+				writeSettingsKey("spinnerEnabled", value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply spinner module change", "info");
+				break;
+			}
 			case "spinnerVerbColor":
 			case "spinnerStatusColor": {
 				if (!value) return;
@@ -6356,7 +6367,7 @@ export default function (pi: ExtensionAPI) {
 
 	const TOOL_MODES = ["outlines", "transparent", "default"] as const;
 	const TOOL_BOOL_MODES = ["on", "off", "toggle", "status"] as const;
-	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "diff", "theme", "spinner", "ui", "settings", "status"] as const;
+	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "diff", "theme", "spinner", "setup", "ui", "settings", "status"] as const;
 	const booleanMode = (raw: string | undefined, current: boolean): boolean | "status" | undefined => {
 		const mode = raw || "toggle";
 		if (mode === "on") return true;
@@ -6387,7 +6398,7 @@ export default function (pi: ExtensionAPI) {
 		].join("\n"), "info");
 	};
 	pi.registerCommand("cc-my-pi", {
-		description: "Open cc-my-pi settings UI (or style/group/branch/diff/theme/spinner subcommands)",
+		description: "Open cc-my-pi settings UI (or setup/style/group/branch/diff/theme/spinner subcommands)",
 		getArgumentCompletions(prefix) {
 			const parts = prefix.trimStart().split(/\s+/);
 			const first = parts[0] ?? "";
@@ -6404,6 +6415,7 @@ export default function (pi: ExtensionAPI) {
 							: m === "diff" ? "Collapsed diff preview cap (lines)"
 							: m === "theme" ? "Theme-adaptive colors: on, off, toggle, status"
 							: m === "spinner" ? "Spinner verb/status colors: verb <key>, status <key>, preview, reset"
+							: m === "setup" ? "Guided walkthrough of every setting (re-runnable)"
 							: m === "ui" || m === "settings" ? "Open interactive settings panel with live preview"
 							: m === "status" ? "Show tool UI settings as text"
 							: m === "outlines" ? "Horizontal rules around each tool (default)"
@@ -6471,6 +6483,12 @@ export default function (pi: ExtensionAPI) {
 				const rawRest = args.trim().split(/\s+/).filter(Boolean).slice(1).join(" ");
 				if (sub === "theme") await themeCommand.handler(rawRest, ctx);
 				else await spinnerCommand.handler(rawRest, ctx);
+				return;
+			}
+
+			if (sub === "setup") {
+				await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
+				writeSettingsKey("ccMyPiSetupDone", true);
 				return;
 			}
 
@@ -6746,6 +6764,20 @@ export default function (pi: ExtensionAPI) {
 			scheduleDeferredChromeRebind(ctx, 48);
 			// Chat history rebuild can run after session_start; re-sync transparent tool bgs.
 			scheduleDeferredChromeRebind(ctx, 120);
+		}
+		if (readSettings().ccMyPiSetupDone !== true) {
+			// First load: run the guided setup once. Esc skips; either way the
+			// marker is written so it never auto-opens again. /cc-my-pi setup re-runs it.
+			// The 250ms defer lets theme extensions and the chrome rebind settle first.
+			setTimeout(() => {
+				void (async () => {
+					try {
+						await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
+					} finally {
+						writeSettingsKey("ccMyPiSetupDone", true);
+					}
+				})();
+			}, 250);
 		}
 	});
 

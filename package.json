@@ -41,7 +41,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/queue-steer/index.ts",
-    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts",
+    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts",
     "pack:dry-run": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
     "bench:tools": "bun scripts/benchmark-tools.ts"

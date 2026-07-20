@@ -24,6 +24,7 @@ export interface CcToolsUiSnapshot {
 	doubleEscClearEnabled: boolean;
 	queueSteerEnabled: boolean;
 	branchPreset: BranchPreset;
+	spinnerEnabled: boolean;
 	spinnerVerbColor: string;
 	spinnerStatusColor: string;
 	readOutputMode: OutputMode;
@@ -147,6 +148,16 @@ const SETTING_ORDER: Array<{
 			s.themeAdaptive
 				? "Borders/diffs/muted follow active pi theme"
 				: "Fixed Claude palette (ignore pi theme colors)",
+	},
+	{
+		id: "spinnerEnabled",
+		label: "Spinner",
+		values: ["on", "off"],
+		current: (s) => (s.spinnerEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.spinnerEnabled
+				? "Claude-style spinner (verb + status suffix); off requires /reload"
+				: "Spinner module disabled (pi default spinner; /reload required)",
 	},
 	{
 		id: "spinnerVerbColor",
@@ -611,6 +622,109 @@ export async function openCcToolsSettingsPanel(
 			};
 
 			return panel;
+		},
+		{
+			overlay: true,
+			overlayOptions: {
+				anchor: "bottom-center",
+				width: "100%",
+				maxHeight: "90%",
+				margin: { left: 0, right: 0, bottom: 0 },
+			},
+		},
+	);
+}
+
+/**
+ * Guided first-run walkthrough: the settings overlay restricted to one row at a
+ * time, in SETTING_ORDER order. Each step applies changes live through the same
+ * controller as the panel and shows buildCcToolsPreview with the current row
+ * focused, so every change renders its `changed: <label> → <value>` example.
+ * Resolves when the user finishes (Esc or Enter on the last step). The caller
+ * owns the "setup done" marker — this component stays settings-file-agnostic.
+ */
+export async function openCcToolsSetupWizard(
+	ctx: any,
+	controller: CcToolsSettingsController,
+): Promise<void> {
+	if (!ctx?.hasUI) {
+		ctx?.ui?.notify?.("/cc-my-pi setup requires TUI mode", "error");
+		return;
+	}
+
+	await ctx.ui.custom(
+		(_tui: unknown, theme: Theme, _kb: unknown, done: (value?: undefined) => void) => {
+			let snap = controller.getSnapshot();
+			let stepIndex = 0;
+			const total = SETTING_ORDER.length;
+			let cacheWidth: number | undefined;
+			let cacheLines: string[] | undefined;
+			const kb = getKeybindings();
+
+			const invalidateCache = () => {
+				cacheWidth = undefined;
+				cacheLines = undefined;
+			};
+
+			const cycle = (direction: 1 | -1) => {
+				const def = SETTING_ORDER[stepIndex];
+				if (!def?.values.length) return;
+				const cur = def.current(snap);
+				const idx = def.values.indexOf(cur);
+				const base = idx >= 0 ? idx : 0;
+				const next = def.values[(base + direction + def.values.length) % def.values.length]!;
+				controller.apply(def.id, next, ctx);
+				snap = controller.getSnapshot();
+				invalidateCache();
+				ctx.ui.requestRender?.();
+			};
+
+			const advance = () => {
+				if (stepIndex >= total - 1) {
+					done(undefined);
+					return;
+				}
+				stepIndex += 1;
+				invalidateCache();
+				ctx.ui.requestRender?.();
+			};
+
+			const back = () => {
+				if (stepIndex <= 0) return;
+				stepIndex -= 1;
+				invalidateCache();
+				ctx.ui.requestRender?.();
+			};
+
+			return {
+				invalidate() {
+					invalidateCache();
+				},
+				handleInput(data: string) {
+					if (kb.matches(data, "tui.editor.cursorLeft") || data === "h") return cycle(-1);
+					if (kb.matches(data, "tui.editor.cursorRight") || data === "l" || data === " ") return cycle(1);
+					if (data === "\r" || data === "\n") return advance();
+					if (data === "b") return back();
+					if (data === "\x1b") return done(undefined);
+				},
+				render(width: number) {
+					if (cacheLines && cacheWidth === width) return cacheLines;
+					const def = SETTING_ORDER[stepIndex]!;
+					const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${total}: ${def.label}`;
+					const title = safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText);
+					const hints = safeFg(theme, "muted", "←/→ or space change · enter next · b back · esc finish");
+					const cur = def.current(snap);
+					const valueLine = def.values
+						.map((v) => (v === cur ? safeFg(theme, "accent", `● ${v}`) : safeFg(theme, "dim", `  ${v}`)))
+						.join("   ");
+					const describe = safeFg(theme, "dim", def.describe(snap));
+					const preview = buildCcToolsPreview(snap, theme, def.id);
+					const out = [title, hints, "", valueLine, describe, "", ...preview];
+					cacheWidth = width;
+					cacheLines = out;
+					return out;
+				},
+			};
 		},
 		{
 			overlay: true,

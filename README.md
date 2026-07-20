@@ -130,6 +130,7 @@ Use `/cc-my-pi` to control tool UI at runtime:
 
 ```text
 /cc-my-pi                 # open interactive settings panel (live ASCII preview)
+/cc-my-pi setup           # guided walkthrough of every setting (auto-runs once on first load)
 /cc-my-pi ui              # same as bare /cc-my-pi
 /cc-my-pi status          # text dump of style, grouping, bullets, branch
 /cc-my-pi outlines        # tool style: outlines, transparent, or default

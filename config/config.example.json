@@ -20,5 +20,6 @@
   "assistantListBulletStyle": "default",
   "imagePasterEnabled": true,
   "escSteerEnabled": true,
-  "doubleEscClearEnabled": true
+  "doubleEscClearEnabled": true,
+  "spinnerEnabled": true
 }

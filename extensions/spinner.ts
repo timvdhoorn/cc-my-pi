@@ -67,6 +67,24 @@ function themeAdaptiveEnabled(): boolean {
 	return readSpinnerSettings().adaptive;
 }
 
+// One-shot read at registration: the spinner module is a reload-required gate
+// (like imagePasterEnabled), so we don't fold this into the TTL-cached
+// readSpinnerSettings that runs every tick. Home settings win over cwd.
+function spinnerModuleEnabled(): boolean {
+	let enabled = true;
+	const paths = [`${process.cwd()}/.pi/settings.json`, `${process.env.HOME ?? ""}/.pi/settings.json`];
+	for (const p of paths) {
+		try {
+			if (!p || !existsSync(p)) continue;
+			const raw = JSON.parse(readFileSync(p, "utf8"));
+			if (raw && typeof raw === "object" && typeof raw.spinnerEnabled === "boolean") {
+				enabled = raw.spinnerEnabled;
+			}
+		} catch { /* ignore */ }
+	}
+	return enabled;
+}
+
 // Original Claude-style values restored when the user turns adaptive off.
 const _DEFAULT_CLAUDE_ORANGE = "\x1b[38;2;215;119;87m";
 const _DEFAULT_STATUS_DIM = "\x1b[38;2;153;153;153m";
@@ -569,6 +587,7 @@ const TURN_COMPLETION_MS = 2_500;
 
 
 export default function (pi: ExtensionAPI) {
+	if (!spinnerModuleEnabled()) return;
 	let agentStartTime = 0;
 	let turnStartTime = 0;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;

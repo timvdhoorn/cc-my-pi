@@ -3,6 +3,19 @@
 > [!IMPORTANT]
 > **1.0.69 — package rename (permanent).** Canonical npm name is now [`pi-claude-code-ui`](https://www.npmjs.com/package/pi-claude-code-ui). `pi-claude-style-tools` is legacy and will not receive further releases. Install with `pi install npm:pi-claude-code-ui` or `npm i pi-claude-code-ui`.
 
+## Unreleased
+
+### Added
+
+- **Guided setup wizard** — `/cc-my-pi setup` walks through every setting one at
+  a time, applying changes live and showing the `changed: <label> → <value>`
+  example preview for each. It auto-runs once on first load (Esc skips; the
+  `ccMyPiSetupDone` marker suppresses further auto-opens) and is re-runnable any
+  time via the command.
+- **`spinnerEnabled` module toggle** — the Claude-style spinner can now be
+  disabled (`/cc-my-pi setup` or the settings panel `Spinner` row), falling back
+  to Pi's stock spinner. Reload required; default on.
+
 ## 1.1.0 — 2026-07-20
 
 ### Changed
