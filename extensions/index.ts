@@ -65,6 +65,8 @@ import registerStatuslineUi from "./statusline/ui-customization/index.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
 import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import { registerClaudeHeader, type HeaderHooks } from "./claude-header/index.js";
+import { registerLoadedCommand } from "./claude-header/loaded-stats.js";
+import { createQuietStartupFile } from "./pi-agent-settings.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -6310,6 +6312,8 @@ export default function (pi: ExtensionAPI) {
 	// Register AFTER the statusline block so the header's setTimeout(0) apply
 	// wins the setHeader race deterministically.
 	registerClaudeHeader(pi, claudeHeaderEnabled, { onTui: statuslineHeaderHooks });
+	// /loaded is ALWAYS registered, independent of the header setting (Decision 5).
+	registerLoadedCommand(pi);
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
@@ -6341,6 +6345,9 @@ export default function (pi: ExtensionAPI) {
 	// /cc-my-pi command — control tool chrome, grouping, detail, and settings UI.
 	// Reader/writer for the optional companion packages in ~/.pi/agent/settings.json.
 	const piPackagesFile = createPiPackagesFile();
+	// Native Pi `quietStartup` lives in Pi core's OWN ~/.pi/agent/settings.json —
+	// a different file from cc-my-pi's ~/.pi/settings.json (readSettings above).
+	const quietStartupFile = createQuietStartupFile();
 	const getBranchPreset = (): BranchPreset => {
 		if (!toolBranchColorModeFixed()) return "theme";
 		const gray = getConfiguredToolBranchGray();
@@ -6381,6 +6388,7 @@ export default function (pi: ExtensionAPI) {
 			bashOutputMode,
 			diffCollapsedLines: diffCollapsedLimit() ?? "stock",
 			claudeHeaderEnabled: settings.claudeHeaderEnabled !== false,
+			quietStartup: quietStartupFile.read(),
 			statuslineEnabled: settings.statuslineEnabled !== false,
 			statuslineCtxStyle: settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
 			statuslineShowWorktree: settings.statuslineShowWorktree !== false,
@@ -6500,6 +6508,12 @@ export default function (pi: ExtensionAPI) {
 			case "claudeHeaderEnabled": {
 				writeSettingsKey("claudeHeaderEnabled", value === "on");
 				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply header change", "info");
+				break;
+			}
+			case "quietStartup": {
+				// Writes Pi core's own ~/.pi/agent/settings.json, NOT cc-my-pi's file.
+				quietStartupFile.write(value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Quiet startup takes effect next session (/reload)", "info");
 				break;
 			}
 			case "statuslineEnabled": {

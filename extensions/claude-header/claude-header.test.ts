@@ -1,7 +1,28 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import { registerClaudeHeader } from "./index.ts";
-import { headerColumnWidths, padRight, pickSlashCommandTips } from "./render-utils.ts";
+import { headerColumnWidths, padRight } from "./render-utils.ts";
+import { collectLoadedStats, resetLoadedStatsCache } from "./loaded-stats.ts";
+
+/**
+ * Pre-seed the shared stats cache with a stub loader so the header never builds
+ * a real DefaultResourceLoader (keeps these tests off the real ~/.pi/agent).
+ */
+function seedStats(): void {
+	resetLoadedStatsCache();
+	collectLoadedStats("/t", "/t", {
+		loaderFactory: () => ({
+			reload: async () => {},
+			getSkills: () => ({ skills: [] }),
+			getPrompts: () => ({ prompts: [] }),
+			getExtensions: () => ({ extensions: [] }),
+			getThemes: () => ({ themes: [] }),
+		}),
+		mcpPaths: [],
+	});
+}
+
+beforeEach(seedStats);
 
 const stubTheme: any = {
 	fg: (_key: string, text: string) => text,
@@ -9,14 +30,15 @@ const stubTheme: any = {
 };
 
 /** Minimal fake pi that records `on` handlers and serves commands/thinking. */
-function makePi() {
+function makePi(commands: Array<{ name: string }> = [{ name: "model" }, { name: "settings" }]) {
 	const handlers = new Map<string, (event: any, ctx: any) => void>();
 	const pi: any = {
 		on: (event: string, handler: (event: any, ctx: any) => void) => {
 			handlers.set(event, handler);
 		},
-		getCommands: () => [{ name: "model" }, { name: "settings" }, { name: "reload" }],
+		getCommands: () => commands,
 		getThinkingLevel: () => "medium",
+		sendMessage: () => {},
 	};
 	return { pi, handlers };
 }
@@ -38,6 +60,21 @@ function makeCtx() {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
+const FAKE_STATS = {
+	skills: { user: 128, project: 14 },
+	prompts: { user: 15, project: 2 },
+	extensions: { user: 30, project: 8 },
+	themes: { user: 4, project: 1 },
+	mcpServers: 3,
+	detail: {
+		skills: { global: [], project: [] },
+		prompts: { global: [], project: [] },
+		extensions: { global: [], project: [] },
+		themes: { global: [], project: [] },
+		mcp: { global: [], project: [] },
+	},
+};
+
 test("registerClaudeHeader(pi, false) registers no handlers and never sets a header", async () => {
 	const { pi, handlers } = makePi();
 	registerClaudeHeader(pi, false);
@@ -54,7 +91,7 @@ test("enabled: session_start sets a header whose first line is the boxed frame",
 
 	assert.equal(setHeaderFactories.length, 1);
 	const component = setHeaderFactories[0]!({ requestRender: () => {} });
-	const lines = component.render(80);
+	const lines = component.render(120);
 	assert.ok(lines[0].includes("╭"), "first line has top-left box corner");
 	assert.ok(lines[0].includes("Pi v"), "first line labels the Pi version");
 	component.dispose();
@@ -99,7 +136,7 @@ test("dispose() clears the animation interval timer", async () => {
 	assert.ok(cleared.includes(fakeTimer), "dispose passed the interval handle to clearInterval");
 });
 
-test("tips include /cc-my-pi and never the upstream use-default-tui command", async () => {
+test("right column shows the Getting started + Loaded sections and the /loaded hint", async () => {
 	const { pi, handlers } = makePi();
 	registerClaudeHeader(pi, true);
 	const { ctx, setHeaderFactories } = makeCtx();
@@ -108,20 +145,72 @@ test("tips include /cc-my-pi and never the upstream use-default-tui command", as
 	await tick();
 
 	const component = setHeaderFactories[0]!({ requestRender: () => {} });
-	const rendered = component.render(80).join("\n");
-	assert.ok(rendered.includes("/cc-my-pi"), "fixed tip present");
-	assert.ok(!rendered.includes("use-default-tui"), "no upstream command name leaks in");
+	const rendered = component.render(120).join("\n");
+	assert.ok(rendered.includes("Getting started"), "getting-started section header");
+	assert.ok(rendered.includes("Run /cc-my-pi to configure the look"), "single tip line");
+	assert.ok(rendered.includes("Loaded"), "loaded section header");
+	assert.ok(rendered.includes("/loaded for details"), "loaded hint");
+	assert.ok(rendered.includes("cc-my-pi · Claude Code look for Pi"), "left-column tagline present");
 	component.dispose();
 });
 
-test("headerColumnWidths hides tips when the terminal is too narrow", () => {
+test("counts line shows … while stats are pending, then real counts once resolved", async () => {
+	const { pi, handlers } = makePi();
+	registerClaudeHeader(pi, true);
+	const { ctx, setHeaderFactories } = makeCtx();
+
+	handlers.get("session_start")!({}, ctx);
+	await tick();
+
+	const component = setHeaderFactories[0]!({ requestRender: () => {} });
+	// Synchronous first render: the async scan has not resolved → placeholder.
+	assert.ok(component.render(120).join("\n").includes("…"), "pending placeholder");
+
+	(component as any).stats = FAKE_STATS;
+	const resolved = component.render(120).join("\n");
+	assert.ok(resolved.includes("142 skills · 17 prompts · 38 extensions · 3 mcp servers"), "counts line");
+	assert.ok(resolved.includes("173 global · 24 project"), "aggregate excludes themes and mcp");
+	component.dispose();
+});
+
+test("/context hint appears only when a context command exists", async () => {
+	// Absent.
+	{
+		const { pi, handlers } = makePi([{ name: "model" }]);
+		registerClaudeHeader(pi, true);
+		const { ctx, setHeaderFactories } = makeCtx();
+		handlers.get("session_start")!({}, ctx);
+		await tick();
+		const component = setHeaderFactories[0]!({ requestRender: () => {} });
+		assert.ok(!component.render(120).join("\n").includes("/context"), "no /context hint");
+		component.dispose();
+	}
+	// Present.
+	{
+		const { pi, handlers } = makePi([{ name: "model" }, { name: "context" }]);
+		registerClaudeHeader(pi, true);
+		const { ctx, setHeaderFactories } = makeCtx();
+		handlers.get("session_start")!({}, ctx);
+		await tick();
+		const component = setHeaderFactories[0]!({ requestRender: () => {} });
+		assert.ok(
+			component.render(120).join("\n").includes("/context to view current context"),
+			"context hint present",
+		);
+		component.dispose();
+	}
+});
+
+test("headerColumnWidths flips to Claude proportions (narrow left, wider right)", () => {
 	const narrow = headerColumnWidths(20);
-	assert.equal(narrow.useTips, false);
+	assert.equal(narrow.useRight, false);
 	assert.equal(narrow.leftWidth, 20);
 
-	const wide = headerColumnWidths(100);
-	assert.equal(wide.useTips, true);
-	assert.ok(wide.leftWidth > wide.rightWidth, "logo half stays wider than tips");
+	const wide = headerColumnWidths(120);
+	assert.equal(wide.useRight, true);
+	assert.ok(wide.rightWidth > wide.leftWidth, "right column is the wider half");
+	assert.ok(wide.leftWidth <= 44, "left column clamped to MAX_LEFT_WIDTH");
+	assert.ok(wide.leftWidth >= 24, "left column at least MIN_LEFT_WIDTH");
 });
 
 test("padRight pads to width and truncates with an ellipsis when over", () => {
@@ -129,34 +218,4 @@ test("padRight pads to width and truncates with an ellipsis when over", () => {
 	const clipped = padRight("hello world", 5, "…");
 	assert.ok(clipped.startsWith("hell"), "keeps the leading visible chars");
 	assert.ok(clipped.includes("…"), "adds the ellipsis when truncating");
-});
-
-test("pickSlashCommandTips puts the fixed tip first, slash-prefixed", () => {
-	const tips = pickSlashCommandTips(["model", "settings", "reload"], {
-		fixed: ["cc-my-pi"],
-		count: 2,
-		random: () => 0,
-	});
-	assert.equal(tips[0], "/cc-my-pi");
-	assert.equal(tips.length, 3);
-});
-
-test("pickSlashCommandTips respects count and never duplicates", () => {
-	const tips = pickSlashCommandTips(["model", "model", "settings", "reload", "quit"], {
-		fixed: ["cc-my-pi"],
-		count: 3,
-		random: () => 0.5,
-	});
-	assert.equal(tips.length, 4);
-	assert.equal(new Set(tips).size, tips.length, "no duplicate tips");
-	assert.ok(tips.every((t) => t.startsWith("/")), "all tips slash-prefixed");
-});
-
-test("pickSlashCommandTips excludes the fixed name from the random pool", () => {
-	const tips = pickSlashCommandTips(["cc-my-pi", "model", "settings"], {
-		fixed: ["cc-my-pi"],
-		count: 3,
-		random: () => 0,
-	});
-	assert.equal(tips.filter((t) => t === "/cc-my-pi").length, 1, "fixed name not re-picked");
 });

@@ -35,6 +35,8 @@ export interface CcToolsUiSnapshot {
 	bashOutputMode: BashOutputMode;
 	diffCollapsedLines: number | "stock";
 	claudeHeaderEnabled: boolean;
+	/** Native Pi `quietStartup` (read from ~/.pi/agent/settings.json, not cc-my-pi's file). */
+	quietStartup: boolean;
 	statuslineEnabled: boolean;
 	statuslineCtxStyle: "claude" | "plain";
 	statuslineShowWorktree: boolean;
@@ -57,6 +59,12 @@ export const SETTING_ORDER: Array<{
 	values: string[];
 	describe: (snap: CcToolsUiSnapshot) => string;
 	current: (snap: CcToolsUiSnapshot) => string;
+	/**
+	 * Optional wizard-only default: on the FIRST visit to this step the wizard
+	 * applies this value (if it differs from the current one). Used so quiet
+	 * startup defaults ON alongside the header; the user can still cycle it.
+	 */
+	wizardDefault?: (snap: CcToolsUiSnapshot) => string | undefined;
 }> = [
 	{
 		id: "toolBackground",
@@ -261,8 +269,19 @@ export const SETTING_ORDER: Array<{
 		current: (s) => (s.claudeHeaderEnabled ? "on" : "off"),
 		describe: (s) =>
 			s.claudeHeaderEnabled
-				? "Animated boxed Pi-logo startup header with command tips; off requires /reload"
+				? "Animated π-mascot startup header with a Loaded counts panel; off requires /reload"
 				: "Simple one-line welcome header (statusline module) (/reload required)",
+	},
+	{
+		id: "quietStartup",
+		label: "Quiet startup",
+		values: ["on", "off"],
+		current: (s) => (s.quietStartup ? "on" : "off"),
+		describe: (s) =>
+			s.quietStartup
+				? "Hide Pi's startup resource listing (use /loaded instead) — takes effect next session"
+				: "Show the full loaded-resources listing at startup — takes effect next session",
+		wizardDefault: (s) => (s.claudeHeaderEnabled ? "on" : undefined),
 	},
 	{
 		id: "statuslineEnabled",
@@ -782,6 +801,21 @@ export async function openCcToolsSetupWizard(
 				cacheLines = undefined;
 			};
 
+			// First-visit defaults (e.g. quiet startup ON alongside the header). Applied
+			// once per step so the user can still cycle away from it afterward.
+			const defaulted = new Set<number>();
+			const applyStepDefault = () => {
+				const def = SETTING_ORDER[stepIndex];
+				if (!def || defaulted.has(stepIndex)) return;
+				defaulted.add(stepIndex);
+				const want = def.wizardDefault?.(snap);
+				if (want && want !== def.current(snap)) {
+					controller.apply(def.id, want, ctx);
+					snap = controller.getSnapshot();
+					invalidateCache();
+				}
+			};
+
 			// Esc arrives as a bare byte in legacy mode and as the kitty CSI-u
 			// sequence `\x1b[27u` under the keyboard protocol pi negotiates; the raw
 			// `data === "\x1b"` check the wizard used before never saw the kitty form,
@@ -813,6 +847,7 @@ export async function openCcToolsSetupWizard(
 			const advance = () => {
 				if (stepIndex >= total - 1) return finish("completed");
 				stepIndex += 1;
+				applyStepDefault();
 				invalidateCache();
 				ctx.ui.requestRender?.();
 			};
@@ -820,6 +855,7 @@ export async function openCcToolsSetupWizard(
 			const back = () => {
 				if (stepIndex <= 0) return;
 				stepIndex -= 1;
+				applyStepDefault();
 				invalidateCache();
 				ctx.ui.requestRender?.();
 			};
@@ -868,6 +904,7 @@ export async function openCcToolsSetupWizard(
 					if (phase === "intro") {
 						if (data === "\r" || data === "\n") {
 							phase = "steps";
+							applyStepDefault();
 							invalidateCache();
 							ctx.ui.requestRender?.();
 							return;
