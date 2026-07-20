@@ -24,6 +24,7 @@ closest to stock Pi.
 
 **Settings panel** — `/cc-my-pi` with live ASCII preview
 
+![Settings panel](assets/screenshots/settings-panel.png)
 
 **`/copy-code` content picker**
 
@@ -37,7 +38,6 @@ closest to stock Pi.
 Drop PNGs into assets/screenshots/ with the names below, then delete the
 matching checklist line — the embed uncomments itself by replacing this block:
 
-![Settings panel](assets/screenshots/settings-panel.png)
 ![Setup wizard](assets/screenshots/setup-wizard.png)
 ![Spinner](assets/screenshots/spinner.png)
 ![Queue steer](assets/screenshots/queue-steer.png)
