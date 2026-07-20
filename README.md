@@ -178,6 +178,17 @@ registered automatically via the package manifest. Activate it by setting
 `"theme": "cc-my-pi-dark"` in `~/.pi/agent/settings.json` (or via Pi's theme
 switcher), then `/reload`.
 
+## Goes well with
+
+Not bundled (standalone npm packages, install via `packages` in
+`~/.pi/agent/settings.json`):
+
+- [`pi-context-view`](https://github.com/dimk90/pi-context-view)
+  (`npm:pi-context-view`, MIT — Dmitry Makarov) — visualizes what fills the
+  model's context and lets you inspect the normally hidden parts (base
+  prompt, tool schemas, extension injections). Pairs nicely with the
+  statusline's context gauge.
+
 ## Configuration reference
 
 Full settings block (see [Modules](#modules) above for module toggles —
