@@ -13,6 +13,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
+	BashExecutionComponent,
 	CustomEditor,
 	CustomMessageComponent,
 	ToolExecutionComponent,
@@ -72,6 +73,7 @@ import {
 	trimUserMessagePadding,
 	userMessageCopyPayload,
 } from "./user-message-render.js";
+import { classifyBashRenderLines, renderClaudeBashLines } from "./bash-execution-render.js";
 
 import * as Diff from "diff";
 import type { BundledLanguage, BundledTheme } from "shiki";
@@ -2262,6 +2264,48 @@ function patchUserMessageRender(): void {
 		return storeMessageRenderCache(this, width, applyTerminalCopyZones(clamped));
 	};
 	proto[USER_MESSAGE_PATCH_FLAG] = true;
+}
+
+const BASH_EXECUTION_PATCH_FLAG = Symbol.for("cc-my-pi:bash-execution-render");
+
+/**
+ * Restyles `!` bash-mode executions from pi-core's framed block (spacer, two
+ * `─` rules, `$ command` header) into Claude Code's compact row: a full-width
+ * `!` band (matching the user-message band) with the output/loader/status
+ * indented under a `⎿` arm. `!!` (excludeFromContext) runs share the same
+ * band — dim-mode is not distinguished, see commit body.
+ */
+function patchBashExecutionRender(): void {
+	const proto = BashExecutionComponent.prototype as any;
+	if (proto[BASH_EXECUTION_PATCH_FLAG]) return;
+	const originalRender = proto.render;
+	if (typeof originalRender !== "function") return;
+	proto.render = function patchedBashExecutionRender(width: number) {
+		const original = originalRender.call(this, width);
+		if (!Array.isArray(original) || original.length === 0) return original;
+		const innerWidth = Math.max(10, width - 6);
+		const narrow = originalRender.call(this, innerWidth);
+		if (!Array.isArray(narrow) || narrow.length === 0) return original;
+		const contentLines = classifyBashRenderLines(narrow, stripAnsi);
+		if (contentLines === null) return original;
+		const theme = getGlobalPiTheme() as any;
+		const glyphColor = safeFgAnsi(theme, "bashMode") ?? BORDER_COLOR;
+		const branchColor = currentToolBranchAnsi(theme);
+		const rendered = renderClaudeBashLines({
+			command: this.command,
+			width: Math.max(1, width),
+			contentLines,
+			background: userMessageBackground(),
+			glyphColor,
+			branchColor,
+			reset: RESET,
+			transparentReset: TRANSPARENT_RESET,
+			clamp: clampLineWidth,
+			visibleWidth,
+		});
+		return rendered;
+	};
+	proto[BASH_EXECUTION_PATCH_FLAG] = true;
 }
 
 function patchPromptEditorRender(): void {
@@ -6214,6 +6258,7 @@ export default function (pi: ExtensionAPI) {
 	patchGlobalToolBorders();
 	patchCustomMessageRender();
 	patchUserMessageRender();
+	patchBashExecutionRender();
 	patchPromptEditorRender();
 	patchAssistantMessages();
 	patchToolExecutionRenderers();
