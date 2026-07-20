@@ -78,6 +78,14 @@
 
 ### Fixed
 
+- **MCP server count matches pi-mcp-adapter's own resolution.** The header's
+  `Loaded` panel and `/loaded` used to count only the two pi-owned `mcp.json`
+  files, missing the shared global config (`~/.config/mcp/mcp.json`) and any
+  `imports` (cursor/claude-code/claude-desktop/codex/windsurf/vscode) the
+  adapter itself resolves — so a machine with servers only in the shared
+  global file showed no MCP count at all. Counting now mirrors the adapter's
+  four-source merge plus imports expansion, and is gated on the adapter being
+  installed (no `mcp` command → MCP omitted entirely, as before).
 - **Esc now works inside the wizard.** Under the kitty keyboard protocol Pi
   negotiates, Escape arrives as the CSI-u sequence `\x1b[27u`, which the old raw
   `data === "\x1b"` check never matched. The wizard now matches the same

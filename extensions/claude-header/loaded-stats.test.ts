@@ -36,7 +36,7 @@ function makeStubLoader(items: {
 
 test("buckets skills/prompts/extensions/themes by scope (temporary/missing → global)", async () => {
 	resetLoadedStatsCache();
-	const stats = await collectLoadedStats("/cwd", "/agent", {
+	const stats = await collectLoadedStats("/cwd", "/agent", false, {
 		loaderFactory: makeStubLoader({
 			skills: [
 				{ name: "a", scope: "user" },
@@ -51,7 +51,6 @@ test("buckets skills/prompts/extensions/themes by scope (temporary/missing → g
 			],
 			themes: [{ name: "cc-my-pi-dark", scope: "user" }],
 		}),
-		mcpPaths: [],
 	});
 
 	assert.deepEqual(stats.skills, { user: 3, project: 1 }, "temporary + missing count as global");
@@ -64,28 +63,83 @@ test("buckets skills/prompts/extensions/themes by scope (temporary/missing → g
 	assert.deepEqual(stats.themes, { user: 1, project: 0 });
 });
 
-test("MCP servers: parses present files, tolerates missing/corrupt", async () => {
+test("MCP: merges shared-global + pi-global + shared-project + pi-project, tolerates missing/corrupt", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "cc-mcp-"));
-	const globalPath = join(dir, "global-mcp.json");
-	const projectPath = join(dir, "project-mcp.json");
-	writeFileSync(globalPath, JSON.stringify({ mcpServers: { foo: {}, bar: {} } }));
-	writeFileSync(projectPath, "{ not valid json");
+	const sharedGlobal = join(dir, "shared-global.json");
+	const sharedProject = join(dir, "shared-project.json");
+	const piProject = join(dir, "pi-project.json");
+	writeFileSync(sharedGlobal, JSON.stringify({ mcpServers: { foo: {}, bar: {} } }));
+	writeFileSync(sharedProject, "{ not valid json");
+	writeFileSync(piProject, JSON.stringify({ mcpServers: { baz: {} } }));
+	// pi-global comes from <agentDir>/mcp.json — "/agent" doesn't exist, so it's silently skipped.
 
 	resetLoadedStatsCache();
-	const stats = await collectLoadedStats("/cwd", "/agent", {
+	const stats = await collectLoadedStats("/cwd", "/agent", true, {
 		loaderFactory: makeStubLoader({}),
-		mcpPaths: [globalPath, projectPath],
+		mcpPaths: { sharedGlobal, sharedProject, piProject },
 	});
-	assert.equal(stats.mcpServers, 2, "2 global, corrupt project ignored");
-	assert.deepEqual(stats.detail.mcp.global, ["foo", "bar"]);
-	assert.deepEqual(stats.detail.mcp.project, []);
+	assert.equal(stats.mcpServers, 3, "2 global (corrupt shared-project ignored) + 1 project");
+	assert.deepEqual(stats.detail.mcp.global, ["bar", "foo"]);
+	assert.deepEqual(stats.detail.mcp.project, ["baz"]);
 
 	resetLoadedStatsCache();
-	const none = await collectLoadedStats("/cwd", "/agent", {
+	const none = await collectLoadedStats("/cwd", "/agent", true, {
 		loaderFactory: makeStubLoader({}),
-		mcpPaths: [join(dir, "does-not-exist.json"), ""],
+		mcpPaths: { sharedGlobal: join(dir, "does-not-exist.json") },
 	});
 	assert.equal(none.mcpServers, 0, "missing files → 0");
+});
+
+test("MCP: hasMcpAdapter=false omits MCP entirely even with config files present", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "cc-mcp-gate-"));
+	const sharedGlobal = join(dir, "shared-global.json");
+	writeFileSync(sharedGlobal, JSON.stringify({ mcpServers: { foo: {}, bar: {} } }));
+
+	resetLoadedStatsCache();
+	const stats = await collectLoadedStats("/cwd", "/agent", false, {
+		loaderFactory: makeStubLoader({}),
+		mcpPaths: { sharedGlobal },
+	});
+	assert.equal(stats.mcpServers, 0, "gated off → 0 despite servers on disk");
+	assert.deepEqual(stats.detail.mcp, { global: [], project: [] });
+});
+
+test("MCP: imports expand into the merged count, deduped and scoped by import kind", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "cc-mcp-imports-"));
+	const sharedGlobal = join(dir, "shared-global.json");
+	const cursorPath = join(dir, "cursor-mcp.json");
+	const vscodePath = join(dir, "vscode-mcp.json");
+	// shared-global declares two imports: a global-scoped one (cursor) and a
+	// project-scoped one (vscode) — mirrors the adapter's expandImports.
+	writeFileSync(sharedGlobal, JSON.stringify({ mcpServers: { own: {} }, imports: ["cursor", "vscode"] }));
+	writeFileSync(cursorPath, JSON.stringify({ mcpServers: { fromCursor: {}, shared: {} } }));
+	writeFileSync(vscodePath, JSON.stringify({ mcpServers: { fromVscode: {}, shared: {} } }));
+
+	resetLoadedStatsCache();
+	const stats = await collectLoadedStats("/cwd", "/agent", true, {
+		loaderFactory: makeStubLoader({}),
+		mcpPaths: { sharedGlobal, cursor: cursorPath, vscode: vscodePath },
+	});
+	// own + fromCursor land global; fromVscode lands project; "shared" collides
+	// across both — project wins the dedupe, so it appears once, in project.
+	assert.deepEqual(stats.detail.mcp.global, ["fromCursor", "own"]);
+	assert.deepEqual(stats.detail.mcp.project, ["fromVscode", "shared"]);
+	assert.equal(stats.mcpServers, 4);
+});
+
+test("MCP: a shared-global file with 17 servers (this machine's real config) counts as 17", async () => {
+	const dir = mkdtempSync(join(tmpdir(), "cc-mcp-machine-"));
+	const sharedGlobal = join(dir, "shared-global.json");
+	const servers: Record<string, unknown> = {};
+	for (let i = 0; i < 17; i++) servers[`server-${i}`] = {};
+	writeFileSync(sharedGlobal, JSON.stringify({ mcpServers: servers }));
+
+	resetLoadedStatsCache();
+	const stats = await collectLoadedStats("/cwd", "/agent", true, {
+		loaderFactory: makeStubLoader({}),
+		mcpPaths: { sharedGlobal },
+	});
+	assert.equal(stats.mcpServers, 17);
 });
 
 test("the shared cache runs the loader only once until reset", async () => {
@@ -101,8 +155,8 @@ test("the shared cache runs the loader only once until reset", async () => {
 			getThemes: () => ({ themes: [] }),
 		};
 	};
-	const p1 = collectLoadedStats("/cwd", "/agent", { loaderFactory: factory, mcpPaths: [] });
-	const p2 = collectLoadedStats("/cwd", "/agent", { loaderFactory: factory, mcpPaths: [] });
+	const p1 = collectLoadedStats("/cwd", "/agent", false, { loaderFactory: factory });
+	const p2 = collectLoadedStats("/cwd", "/agent", false, { loaderFactory: factory });
 	assert.equal(p1, p2, "same cached promise");
 	await p1;
 	assert.equal(factoryCalls, 1, "loader constructed once");
@@ -119,11 +173,10 @@ test("a failed collection clears the cache so a later call retries", async () =>
 		getExtensions: () => ({ extensions: [] }),
 		getThemes: () => ({ themes: [] }),
 	});
-	await assert.rejects(collectLoadedStats("/cwd", "/agent", { loaderFactory: boom, mcpPaths: [] }));
+	await assert.rejects(collectLoadedStats("/cwd", "/agent", false, { loaderFactory: boom }));
 	// Cache cleared → a fresh good call succeeds.
-	const ok = await collectLoadedStats("/cwd", "/agent", {
+	const ok = await collectLoadedStats("/cwd", "/agent", false, {
 		loaderFactory: makeStubLoader({ skills: [{ name: "s", scope: "user" }] }),
-		mcpPaths: [],
 	});
 	assert.equal(ok.skills.user, 1);
 });
@@ -162,9 +215,8 @@ test("renderLoadedMessage groups by category and omits MCP at 0", () => {
 test("registerLoadedCommand registers /loaded and prints the listing", async () => {
 	resetLoadedStatsCache();
 	// Seed the shared cache so the handler reuses it (no real loader).
-	await collectLoadedStats("/cwd", "/agent", {
+	await collectLoadedStats("/cwd", "/agent", false, {
 		loaderFactory: makeStubLoader({ skills: [{ name: "s1", scope: "user" }] }),
-		mcpPaths: [],
 	});
 
 	const commands = new Map<string, any>();
@@ -172,6 +224,7 @@ test("registerLoadedCommand registers /loaded and prints the listing", async () 
 	const pi: any = {
 		registerCommand: (name: string, opts: any) => commands.set(name, opts),
 		sendMessage: (m: any) => sent.push(m),
+		getCommands: () => [],
 	};
 	registerLoadedCommand(pi);
 	assert.ok(commands.has("loaded"), "/loaded registered");

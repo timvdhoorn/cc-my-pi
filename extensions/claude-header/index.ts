@@ -82,10 +82,11 @@ class PiStartupHeader implements Component {
 		this.ctx = ctx;
 		this.tui = tui;
 		this.hasContextCommand = pi.getCommands().some((c) => c.name === "context");
+		const hasMcpAdapter = pi.getCommands().some((c) => c.name === "mcp");
 
 		// Kick off the (shared, cached) resource scan; re-render when it resolves.
 		// On failure the header simply omits the count lines.
-		collectLoadedStats(ctx.cwd, resolveAgentDir())
+		collectLoadedStats(ctx.cwd, resolveAgentDir(), hasMcpAdapter)
 			.then((stats) => {
 				this.stats = stats;
 				this.tui.requestRender();
