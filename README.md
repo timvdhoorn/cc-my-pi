@@ -84,27 +84,27 @@ Set `themeAdaptive: false` to keep the original fixed Claude-style palette regar
 
 On `/resume`, `/new`, or `/fork`, tool chrome is rebound from the **current** pi theme (no coupling to Ghostty or other theme extensions). If you use Ghostty sync, listing it **above** this extension in `settings.json` is recommended so `setTheme` runs before chrome rebind.
 
-#### Toggle at runtime with `/cc-theme`
+#### Toggle at runtime with `/cc-my-pi theme`
 
 ```text
-/cc-theme           # show current setting + theme name
-/cc-theme status    # show current setting + color preview (incl. spinner)
-/cc-theme on        # follow pi theme
-/cc-theme off       # keep fixed Claude palette
-/cc-theme toggle    # flip the current value
+/cc-my-pi theme           # show current setting + theme name
+/cc-my-pi theme status    # show current setting + color preview (incl. spinner)
+/cc-my-pi theme on        # follow pi theme
+/cc-my-pi theme off       # keep fixed Claude palette
+/cc-my-pi theme toggle    # flip the current value
 ```
 
 The selection is persisted to `~/.pi/settings.json` and applied to the next rendered tool row. No restart required.
 
-#### Repaint the spinner with `/cc-spinner`
+#### Repaint the spinner with `/cc-my-pi spinner`
 
-The spinner glyph itself is still colored by pi's loader using `accent`, while the verb text (e.g. `Cooking…`) follows `borderAccent` by default so it stays lively without being the exact same color as the glyph. The status suffix (e.g. `(thinking · ↓ 10 tokens · 2s)`) follows `muted`. Use `/cc-spinner` to bind either text element to any other theme color key:
+The spinner glyph itself is still colored by pi's loader using `accent`, while the verb text (e.g. `Cooking…`) follows `borderAccent` by default so it stays lively without being the exact same color as the glyph. The status suffix (e.g. `(thinking · ↓ 10 tokens · 2s)`) follows `muted`. Use `/cc-my-pi spinner` to bind either text element to any other theme color key:
 
 ```text
-/cc-spinner preview          # list every common theme key with a colored sample
-/cc-spinner verb <key>       # change the verb color (e.g. thinkingHigh, mdHeading)
-/cc-spinner status <key>     # change the status suffix color
-/cc-spinner reset            # restore defaults (verb=borderAccent, status=muted)
+/cc-my-pi spinner preview          # list every common theme key with a colored sample
+/cc-my-pi spinner verb <key>       # change the verb color (e.g. thinkingHigh, mdHeading)
+/cc-my-pi spinner status <key>     # change the status suffix color
+/cc-my-pi spinner reset            # restore defaults (verb=borderAccent, status=muted)
 ```
 
 The selection is persisted as `spinnerVerbColor` / `spinnerStatusColor` in `~/.pi/settings.json` and applied on the next spinner tick.

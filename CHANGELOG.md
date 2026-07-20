@@ -8,9 +8,13 @@
 ### Changed
 
 - **Renamed** package `pi-claude-code-ui` → `cc-my-pi`; command `/cc-tools` →
-  `/cc-my-pi` (`/cc-theme` and `/cc-spinner` unchanged). Settings-UI module
-  renamed to `extensions/cc-my-pi-settings-ui.ts`. Repo renamed to
+  `/cc-my-pi`. Settings-UI module renamed to
+  `extensions/cc-my-pi-settings-ui.ts`. Repo renamed to
   [timvdhoorn/cc-my-pi](https://github.com/timvdhoorn/cc-my-pi).
+- **Folded** `/cc-theme` and `/cc-spinner` into the root command as
+  `/cc-my-pi theme on|off|toggle|status` and
+  `/cc-my-pi spinner verb|status|preview|reset` (with completions); the
+  standalone commands are removed.
 - Added LICENSE (MIT, dual copyright) and a README "Credits & provenance"
   section attributing FammasMaz (base fork), Thomas Mustier (queue-steer,
   esc-steer), Sanju (double-esc-clear), and key dependencies.

@@ -179,7 +179,7 @@ function readSettings(): SettingsFile {
 
 // Cross-extension bust signal for spinner.ts — it watches this counter on
 // globalThis and invalidates its settings cache when it changes. Lets
-// /cc-spinner edits take effect on the next 250ms spinner tick instead of
+// /cc-my-pi spinner edits take effect on the next 250ms spinner tick instead of
 // waiting for the file-stat TTL.
 const SPINNER_BUST_KEY = Symbol.for("pi-claude-style-tools:spinner-settings-bust");
 function bustSpinnerSettingsCache(): void {
@@ -1262,7 +1262,7 @@ const TOOL_EXECUTION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool
 
 // Rendered-output cache for assistant/user/custom message components.
 // Keyed by (width, branch visual epoch, tool background mode). The epoch changes on
-// theme / /cc-my-pi branch / /cc-theme rebinds; the mode is included because subagent
+// theme / /cc-my-pi branch / /cc-my-pi theme rebinds; the mode is included because subagent
 // (custom-message) framing follows `toolBackgroundMode` via frameToolLikeLines. This avoids
 // re-running the per-line ANSI stripping (applyTerminalCopyZones, normalizeLeadingCheckGlyph,
 // border boxing) on every scroll/expand re-render — the dominant CPU cost on long chats,
@@ -6345,7 +6345,7 @@ export default function (pi: ExtensionAPI) {
 
 	const TOOL_MODES = ["outlines", "transparent", "default"] as const;
 	const TOOL_BOOL_MODES = ["on", "off", "toggle", "status"] as const;
-	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "diff", "ui", "settings", "status"] as const;
+	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "diff", "theme", "spinner", "ui", "settings", "status"] as const;
 	const booleanMode = (raw: string | undefined, current: boolean): boolean | "status" | undefined => {
 		const mode = raw || "toggle";
 		if (mode === "on") return true;
@@ -6376,7 +6376,7 @@ export default function (pi: ExtensionAPI) {
 		].join("\n"), "info");
 	};
 	pi.registerCommand("cc-my-pi", {
-		description: "Open cc-my-pi settings UI (or style/group/branch/diff subcommands)",
+		description: "Open cc-my-pi settings UI (or style/group/branch/diff/theme/spinner subcommands)",
 		getArgumentCompletions(prefix) {
 			const parts = prefix.trimStart().split(/\s+/);
 			const first = parts[0] ?? "";
@@ -6391,6 +6391,8 @@ export default function (pi: ExtensionAPI) {
 							: m === "detail" ? "Toggle Ctrl+Shift+O extra-detail mode"
 							: m === "branch" ? "├ └ │ gray (0-255), theme, fixed, or reset"
 							: m === "diff" ? "Collapsed diff preview cap (lines)"
+							: m === "theme" ? "Theme-adaptive colors: on, off, toggle, status"
+							: m === "spinner" ? "Spinner verb/status colors: verb <key>, status <key>, preview, reset"
 							: m === "ui" || m === "settings" ? "Open interactive settings panel with live preview"
 							: m === "status" ? "Show tool UI settings as text"
 							: m === "outlines" ? "Horizontal rules around each tool (default)"
@@ -6412,6 +6414,19 @@ export default function (pi: ExtensionAPI) {
 					.filter((o) => o.startsWith(second))
 					.map((o) => ({ value: `diff ${o}`, label: o, description: "Collapsed diff preview cap (lines)" }));
 			}
+			if (first === "theme") {
+				const second = parts[1] ?? "";
+				return THEME_MODES
+					.filter((o) => o.startsWith(second))
+					.map((o) => ({ value: `theme ${o}`, label: o, description: "Theme-adaptive coloring" }));
+			}
+			if (first === "spinner") {
+				const second = parts[1] ?? "";
+				const opts = ["verb", "status", "reset", "preview"];
+				return opts
+					.filter((o) => o.startsWith(second))
+					.map((o) => ({ value: `spinner ${o}`, label: o, description: "Spinner color subcommand" }));
+			}
 			if (first === "group" || first === "detail" || first === "extra") {
 				const second = parts[1] ?? "";
 				return TOOL_BOOL_MODES
@@ -6430,6 +6445,15 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (sub === "status") {
 				notifyToolStatus(ctx);
+				return;
+			}
+
+			// Folded former standalone commands: /cc-my-pi theme …, /cc-my-pi spinner ….
+			// Pass the original-case remainder — spinner color keys are case-sensitive.
+			if (sub === "theme" || sub === "spinner") {
+				const rawRest = args.trim().split(/\s+/).filter(Boolean).slice(1).join(" ");
+				if (sub === "theme") await themeCommand.handler(rawRest, ctx);
+				else await spinnerCommand.handler(rawRest, ctx);
 				return;
 			}
 
@@ -6553,9 +6577,10 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// /cc-theme command — toggle pi-theme-adaptive coloring at runtime.
+	// /cc-my-pi theme — toggle pi-theme-adaptive coloring at runtime.
+	// Plain handler object (not a registered command); routed from /cc-my-pi.
 	const THEME_MODES = ["on", "off", "toggle", "status"] as const;
-	pi.registerCommand("cc-theme", {
+	const themeCommand: Parameters<ExtensionAPI["registerCommand"]>[1] = {
 		description: "Toggle whether tool borders / branch rules / diff colors follow the active pi theme",
 		getArgumentCompletions(prefix) {
 			return THEME_MODES
@@ -6628,10 +6653,10 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Theme adaptive: ${label}`, "info");
 			}
 		},
-	});
+	};
 
-	// /cc-spinner command — pick which theme color keys drive the spinner verb
-	// and status suffix.
+	// /cc-my-pi spinner — pick which theme color keys drive the spinner verb
+	// and status suffix. Plain handler object; routed from /cc-my-pi.
 	const COMMON_COLOR_KEYS: readonly string[] = [
 		"accent", "borderAccent", "success", "error", "warning",
 		"muted", "dim", "text", "thinkingText",
@@ -6640,7 +6665,7 @@ export default function (pi: ExtensionAPI) {
 		"thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh",
 		"syntaxKeyword", "syntaxFunction", "syntaxString", "syntaxType",
 	];
-	pi.registerCommand("cc-spinner", {
+	const spinnerCommand: Parameters<ExtensionAPI["registerCommand"]>[1] = {
 		description: "Set the spinner verb or status theme color, or preview current values",
 		getArgumentCompletions(prefix) {
 			const subCommands = ["verb", "status", "reset", "preview"];
@@ -6705,13 +6730,13 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (sub !== "verb" && sub !== "status") {
-				if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-spinner verb <key> | status <key> | reset | preview`, "error");
+				if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-my-pi spinner verb <key> | status <key> | reset | preview`, "error");
 				return;
 			}
 
 			const key = parts[1];
 			if (!key) {
-				if (ctx.hasUI) ctx.ui.notify(`Missing color key. Try /cc-spinner preview to see available keys.`, "error");
+				if (ctx.hasUI) ctx.ui.notify(`Missing color key. Try /cc-my-pi spinner preview to see available keys.`, "error");
 				return;
 			}
 
@@ -6726,7 +6751,7 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify(`Spinner ${sub} → ${key} ${sample}`, "info");
 			}
 		},
-	});
+	};
 
 	pi.on("session_start", async (event, ctx) => {
 		clearRtkRewriteState();
