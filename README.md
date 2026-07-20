@@ -10,6 +10,18 @@ closest to stock Pi.
 
 ## Screenshots
 
+**Tool rendering** — grouped tool rows (⏺ dots, collapsed `∴ Thinking`, spinner with esc hint)
+
+![Tool rendering](assets/screenshots/tool-rendering.png)
+
+**Diff rendering** — side-by-side edit/write diff
+
+![Diff rendering](assets/screenshots/diff-rendering.png)
+
+**New-file create** — plain new-file preview with line numbers
+
+![New-file create](assets/screenshots/new-file-create.png)
+
 **`/copy-code` content picker**
 
 ![Copy picker](assets/screenshots/copy-picker.png)
@@ -18,10 +30,8 @@ closest to stock Pi.
 Drop PNGs into assets/screenshots/ with the names below, then delete the
 matching checklist line — the embed uncomments itself by replacing this block:
 
-![Tool rendering](assets/screenshots/tool-rendering.png)
 ![Settings panel](assets/screenshots/settings-panel.png)
 ![Setup wizard](assets/screenshots/setup-wizard.png)
-![Diff rendering](assets/screenshots/diff-rendering.png)
 ![Spinner](assets/screenshots/spinner.png)
 ![Queue steer](assets/screenshots/queue-steer.png)
 -->
@@ -29,10 +39,8 @@ matching checklist line — the embed uncomments itself by replacing this block:
 Screenshots to capture (drop PNGs in `assets/screenshots/`, then swap this
 checklist for the embeds in the HTML comment above):
 
-- [ ] `tool-rendering.png` — a turn with grouped tool rows (⏺ dots, ├/⎿ connectors, live preview)
 - [ ] `settings-panel.png` — `/cc-my-pi` panel with the ASCII preview visible
 - [ ] `setup-wizard.png` — `/cc-my-pi setup` mid-step, showing the `changed: …` example
-- [ ] `diff-rendering.png` — an edit/write diff (syntax highlighting, word-level emphasis)
 - [ ] `spinner.png` — spinner with verb + status suffix
 - [ ] `queue-steer.png` — queue widget with a steer/follow-up queued
 
