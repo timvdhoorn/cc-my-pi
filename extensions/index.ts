@@ -6422,6 +6422,12 @@ export default function (pi: ExtensionAPI) {
 			}
 			if (first === "spinner") {
 				const second = parts[1] ?? "";
+				if ((second === "verb" || second === "status") && parts.length >= 3) {
+					const keyPrefix = (parts[2] ?? "").toLowerCase();
+					return COMMON_COLOR_KEYS
+						.filter((k) => k.toLowerCase().startsWith(keyPrefix))
+						.map((k) => ({ value: `spinner ${second} ${k}`, label: k, description: `theme.fg("${k}", …)` }));
+				}
 				const opts = ["verb", "status", "reset", "preview"];
 				return opts
 					.filter((o) => o.startsWith(second))
@@ -6582,19 +6588,6 @@ export default function (pi: ExtensionAPI) {
 	const THEME_MODES = ["on", "off", "toggle", "status"] as const;
 	const themeCommand: Parameters<ExtensionAPI["registerCommand"]>[1] = {
 		description: "Toggle whether tool borders / branch rules / diff colors follow the active pi theme",
-		getArgumentCompletions(prefix) {
-			return THEME_MODES
-				.filter((m) => m.startsWith(prefix))
-				.map((m) => ({
-					value: m,
-					label: m,
-					description:
-						m === "on" ? "Derive borders, branch rules, dim text and diff tints from the active pi theme (default)"
-						: m === "off" ? "Keep the fixed Claude-style palette regardless of theme"
-						: m === "toggle" ? "Flip between on and off"
-						: "Show the current setting and a preview of the derived colors",
-				}));
-		},
 		async handler(args, ctx) {
 			const raw = args.trim().toLowerCase();
 			const current = themeAdaptiveEnabled();
@@ -6667,31 +6660,6 @@ export default function (pi: ExtensionAPI) {
 	];
 	const spinnerCommand: Parameters<ExtensionAPI["registerCommand"]>[1] = {
 		description: "Set the spinner verb or status theme color, or preview current values",
-		getArgumentCompletions(prefix) {
-			const subCommands = ["verb", "status", "reset", "preview"];
-			const parts = prefix.split(/\s+/);
-			if (parts.length <= 1) {
-				return subCommands
-					.filter((c) => c.startsWith(parts[0] ?? ""))
-					.map((c) => ({
-						value: c,
-						label: c,
-						description:
-							c === "verb" ? "Set the color key used for the spinner verb (e.g. 'Cooking…')"
-							: c === "status" ? "Set the color key used for the spinner status suffix"
-							: c === "reset" ? "Reset both verb and status to defaults (borderAccent, muted)"
-							: "Preview every theme color key with its current sample",
-					}));
-			}
-			// Second arg: color key completions for verb/status.
-			if (parts[0] === "verb" || parts[0] === "status") {
-				const keyPrefix = (parts[1] ?? "").toLowerCase();
-				return COMMON_COLOR_KEYS
-					.filter((k) => k.toLowerCase().startsWith(keyPrefix))
-					.map((k) => ({ value: k, label: k, description: `theme.fg("${k}", …)` }));
-			}
-			return [];
-		},
 		async handler(args, ctx) {
 			const parts = args.trim().split(/\s+/).filter((p) => p.length > 0);
 			const sub = (parts[0] ?? "").toLowerCase();
