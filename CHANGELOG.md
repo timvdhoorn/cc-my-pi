@@ -7,6 +7,9 @@
 
 ### Added
 
+- **/copy command** — Claude-style content picker (full response, per code
+  block, always-full skip).
+
 - **Guided setup wizard** — `/cc-my-pi setup` walks through every setting one at
   a time, applying changes live and showing the `changed: <label> → <value>`
   example preview for each. It opens on an intro screen offering `enter` start ·

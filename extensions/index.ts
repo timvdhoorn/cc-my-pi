@@ -55,6 +55,7 @@ import {
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerSessionCommands } from "./session-commands.js";
+import { registerCopyCommand } from "./copy-command.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
 import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import {
@@ -154,6 +155,10 @@ interface SettingsFile {
 	spinnerEnabled?: boolean;
 	/** /exit and /clear session commands. Defaults to true; reload required to change. */
 	sessionCommandsEnabled?: boolean;
+	/** /copy command (Claude-style content picker). Defaults to true; reload required to change. */
+	copyCommandEnabled?: boolean;
+	/** /copy always copies the full response, skipping the picker. Defaults to false; read live. */
+	copyAlwaysFull?: boolean;
 	/** Marker: guided first-run setup wizard has run once (auto-start suppressed after). */
 	ccMyPiSetupDone?: boolean;
 	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
@@ -6174,6 +6179,10 @@ export default function (pi: ExtensionAPI) {
 	registerBundledQueueSteer(pi, queueSteerEnabled);
 	registerBundledImagePaster(pi, imagePasterEnabled());
 	registerSessionCommands(pi, readSettings().sessionCommandsEnabled !== false);
+	registerCopyCommand(pi, readSettings().copyCommandEnabled !== false, {
+		copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
+		setCopyAlwaysFull: (v) => writeSettingsKey("copyAlwaysFull", v),
+	});
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
@@ -6234,6 +6243,8 @@ export default function (pi: ExtensionAPI) {
 			branchPreset: getBranchPreset(),
 			spinnerEnabled: settings.spinnerEnabled !== false,
 			sessionCommandsEnabled: settings.sessionCommandsEnabled !== false,
+			copyCommandEnabled: settings.copyCommandEnabled !== false,
+			copyAlwaysFull: settings.copyAlwaysFull === true,
 			spinnerVerbColor: String(settings.spinnerVerbColor || "borderAccent"),
 			spinnerStatusColor: String(settings.spinnerStatusColor || "muted"),
 			readOutputMode,
@@ -6355,6 +6366,15 @@ export default function (pi: ExtensionAPI) {
 			case "sessionCommandsEnabled": {
 				writeSettingsKey("sessionCommandsEnabled", value === "on");
 				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /exit + /clear change", "info");
+				break;
+			}
+			case "copyCommandEnabled": {
+				writeSettingsKey("copyCommandEnabled", value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /copy change", "info");
+				break;
+			}
+			case "copyAlwaysFull": {
+				writeSettingsKey("copyAlwaysFull", value === "on");
 				break;
 			}
 			case "spinnerVerbColor":

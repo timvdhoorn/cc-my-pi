@@ -22,5 +22,6 @@
   "escSteerEnabled": true,
   "doubleEscClearEnabled": true,
   "sessionCommandsEnabled": true,
+  "copyCommandEnabled": true,
   "spinnerEnabled": true
 }

@@ -25,6 +25,8 @@ export interface CcToolsUiSnapshot {
 	queueSteerEnabled: boolean;
 	branchPreset: BranchPreset;
 	sessionCommandsEnabled: boolean;
+	copyCommandEnabled: boolean;
+	copyAlwaysFull: boolean;
 	spinnerEnabled: boolean;
 	spinnerVerbColor: string;
 	spinnerStatusColor: string;
@@ -159,6 +161,26 @@ const SETTING_ORDER: Array<{
 			s.sessionCommandsEnabled
 				? "/exit (clean shutdown) and /clear (alias for /new); off requires /reload"
 				: "/exit and /clear not registered (/reload required)",
+	},
+	{
+		id: "copyCommandEnabled",
+		label: "Copy command",
+		values: ["on", "off"],
+		current: (s) => (s.copyCommandEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.copyCommandEnabled
+				? "/copy — pick full response or a code block to copy; off requires /reload"
+				: "/copy not registered (/reload required)",
+	},
+	{
+		id: "copyAlwaysFull",
+		label: "Copy picker",
+		values: ["off", "on"],
+		current: (s) => (s.copyAlwaysFull ? "on" : "off"),
+		describe: (s) =>
+			s.copyAlwaysFull
+				? "/copy always copies the full response (picker skipped)"
+				: "/copy shows the content picker when the response has code blocks",
 	},
 	{
 		id: "spinnerEnabled",
