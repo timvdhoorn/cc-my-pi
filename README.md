@@ -309,7 +309,7 @@ cc-my-pi is not an original work — it stands on these projects:
 | Visual design reference | [Claude Code](https://github.com/anthropics/claude-code) (Anthropic) — glyphs, colors, and layout re-implemented, no code copied | — | — |
 | Syntax highlighting | [Shiki](https://shiki.style) (`@shikijs/cli`) | Shiki contributors | MIT |
 | Diff engine | [jsdiff](https://github.com/kpdecker/jsdiff) (`diff`) | Kevin Decker & contributors | BSD-3-Clause |
-| Image pasting | `pi-paster` | — | see package |
+| Image pasting | [beowulf11/pi-paster](https://github.com/beowulf11/pi-paster) (npm `pi-paster`) | beowulf11 | MIT (package.json; no LICENSE file upstream) |
 
 The base fork itself builds upon and was inspired by:
 
