@@ -56,6 +56,9 @@ import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerSessionCommands } from "./session-commands.js";
 import { registerCopyCommand } from "./copy-command.js";
+import registerStatuslineGitInfo from "./statusline/git-info/index.js";
+import registerStatuslineModelInfo from "./statusline/model-info/index.js";
+import registerStatuslineUi from "./statusline/ui-customization/index.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
 import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import {
@@ -161,6 +164,8 @@ interface SettingsFile {
 	copyAlwaysFull?: boolean;
 	/** Marker: guided first-run setup wizard has run once (auto-start suppressed after). */
 	ccMyPiSetupDone?: boolean;
+	/** Statusline module (model/ctx/git/MCP footer). Defaults to true; reload required to change. */
+	statuslineEnabled?: boolean;
 	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
 	statuslineCtxStyle?: "claude" | "plain";
 	/** Show the `wt <name>` statusline segment inside a git worktree. Defaults to true. */
@@ -6183,6 +6188,11 @@ export default function (pi: ExtensionAPI) {
 		copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
 		setCopyAlwaysFull: (v) => writeSettingsKey("copyAlwaysFull", v),
 	});
+	if (readSettings().statuslineEnabled !== false) {
+		registerStatuslineModelInfo(pi);
+		registerStatuslineGitInfo(pi);
+		registerStatuslineUi(pi);
+	}
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
@@ -6250,6 +6260,7 @@ export default function (pi: ExtensionAPI) {
 			readOutputMode,
 			bashOutputMode,
 			diffCollapsedLines: diffCollapsedLimit() ?? "stock",
+			statuslineEnabled: settings.statuslineEnabled !== false,
 			statuslineCtxStyle: settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
 			statuslineShowWorktree: settings.statuslineShowWorktree !== false,
 		};
@@ -6345,6 +6356,11 @@ export default function (pi: ExtensionAPI) {
 				if (!Number.isFinite(n) || n <= 0 || n > 150) return;
 				writeSettingsKey("diffCollapsedLines", n);
 				if (ctx.hasUI) ctx.ui.setToolsExpanded?.(ctx.ui.getToolsExpanded?.());
+				break;
+			}
+			case "statuslineEnabled": {
+				writeSettingsKey("statuslineEnabled", value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply statusline change", "info");
 				break;
 			}
 			case "statuslineCtxStyle": {

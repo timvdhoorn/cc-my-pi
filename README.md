@@ -30,7 +30,7 @@ closest to stock Pi.
 
 ![Copy picker](assets/screenshots/copy-picker.png)
 
-**Statusline** — model/ctx gauge, git segment, MCP status (separate `packages/statusline`, see [pi-claude-preset](https://github.com/timvdhoorn/pi-claude-preset))
+**Statusline** — model/ctx gauge, git segment, MCP status
 
 ![Statusline](assets/screenshots/statusline.png)
 
@@ -102,7 +102,7 @@ same file.
 | Theme-adaptive palette | Borders, branch connectors, dim text, spinner accent, and diff backgrounds follow the active pi theme | `themeAdaptive` | `true` | live |
 | Grouped tool calls | Adjacent/concurrent tool calls collapse under a compact status header | `groupToolCalls` | `true` | live |
 | Live tool preview | A few output lines shown for still-running tool calls | `liveToolPreview` | `true` | live |
-| Statusline | Steers the separate statusline package (context gauge style, worktree segment); name-shared, no import, 5s TTL | `statuslineCtxStyle`, `statuslineShowWorktree` | `"claude"`, `true` | live (≤5s) |
+| Statusline | Bundled footer module: model/ctx gauge, git segment, MCP status. Sub-settings `statuslineCtxStyle` (context gauge style) and `statuslineShowWorktree` (`wt <name>` segment) apply live (≤5s) | `statuslineEnabled` (module on/off), `statuslineCtxStyle`, `statuslineShowWorktree` | `true`, `"claude"`, `true` | `statuslineEnabled` reload; sub-settings live (≤5s) |
 
 One example per module — set just the key(s) you want to change:
 
@@ -162,9 +162,21 @@ Adjacent tool calls render as separate rows instead of a grouped block.
 Still-running tool calls no longer show a live output preview.
 
 ```json
+{ "statuslineEnabled": false }
+```
+Disables the bundled statusline module (model/ctx gauge, git segment, MCP status); Pi's stock footer takes over after `/reload`.
+
+```json
 { "statuslineCtxStyle": "plain", "statuslineShowWorktree": false }
 ```
 Statusline switches to a plain context style and drops the `wt <name>` worktree segment.
+
+## Theme
+
+The package ships the **`cc-my-pi-dark`** theme (Claude Code-style dark palette),
+registered automatically via the package manifest. Activate it by setting
+`"theme": "cc-my-pi-dark"` in `~/.pi/agent/settings.json` (or via Pi's theme
+switcher), then `/reload`.
 
 ## Configuration reference
 

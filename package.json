@@ -37,20 +37,32 @@
     "extensions/esc-steer.ts",
     "extensions/double-esc-clear.ts",
     "extensions/user-message-render.ts",
+    "extensions/statusline/shared/settings.ts",
+    "extensions/statusline/shared/dashboard-state.ts",
+    "extensions/statusline/model-info/index.ts",
+    "extensions/statusline/git-info/index.ts",
+    "extensions/statusline/git-info/src/changed-files-view.ts",
+    "extensions/statusline/git-info/src/process.ts",
+    "extensions/statusline/git-info/src/refresh-coordinator.ts",
+    "extensions/statusline/git-info/src/runtime.ts",
+    "extensions/statusline/ui-customization/index.ts",
+    "themes/cc-my-pi-dark.json",
     "config/config.example.json",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/copy-command.ts extensions/queue-steer/index.ts",
-    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/copy-command.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts",
+    "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/copy-command.ts extensions/queue-steer/index.ts extensions/statusline/model-info/index.ts extensions/statusline/git-info/index.ts extensions/statusline/ui-customization/index.ts",
+    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/copy-command.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts extensions/statusline/git-info/process.test.ts extensions/statusline/git-info/git-segment.test.ts extensions/statusline/git-info/refresh-coordinator.test.ts",
     "pack:dry-run": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
     "bench:tools": "bun scripts/benchmark-tools.ts"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.98",
     "@shikijs/cli": "^4.0.2",
     "diff": "^9.0.0",
+    "effect": "4.0.0-beta.98",
     "pi-paster": "^0.2.3"
   },
   "peerDependencies": {
@@ -62,6 +74,9 @@
     "extensions": [
       "./extensions/index.ts",
       "./extensions/spinner.ts"
+    ],
+    "themes": [
+      "./themes/cc-my-pi-dark.json"
     ]
   },
   "devDependencies": {

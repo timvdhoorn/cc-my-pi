@@ -23,5 +23,6 @@
   "doubleEscClearEnabled": true,
   "sessionCommandsEnabled": true,
   "copyCommandEnabled": true,
-  "spinnerEnabled": true
+  "spinnerEnabled": true,
+  "statuslineEnabled": true
 }

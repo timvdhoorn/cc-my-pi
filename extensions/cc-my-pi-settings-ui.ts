@@ -33,6 +33,7 @@ export interface CcToolsUiSnapshot {
 	readOutputMode: OutputMode;
 	bashOutputMode: BashOutputMode;
 	diffCollapsedLines: number | "stock";
+	statuslineEnabled: boolean;
 	statuslineCtxStyle: "claude" | "plain";
 	statuslineShowWorktree: boolean;
 }
@@ -245,6 +246,16 @@ const SETTING_ORDER: Array<{
 				: s.bashOutputMode === "preview"
 					? "Short bash preview (one result line)"
 					: "Bash collapsed to exit/status only",
+	},
+	{
+		id: "statuslineEnabled",
+		label: "Statusline",
+		values: ["on", "off"],
+		current: (s) => (s.statuslineEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.statuslineEnabled
+				? "Model/ctx gauge, git segment and MCP status in the footer; off requires /reload"
+				: "Statusline module disabled (stock Pi footer; /reload required)",
 	},
 	{
 		id: "statuslineCtxStyle",

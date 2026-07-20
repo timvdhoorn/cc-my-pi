@@ -7,6 +7,15 @@
 
 ### Added
 
+- **Statusline module** — the model/ctx gauge, git segment and MCP status footer
+  (previously the separate `packages/statusline` Pi package) is now bundled as a
+  gated module, toggled with `statuslineEnabled` (default `true`, `/reload` to
+  change); `statuslineCtxStyle` and `statuslineShowWorktree` remain as live
+  sub-settings.
+
+- **`cc-my-pi-dark` theme** — Claude Code-style dark palette shipped in-package
+  and registered via the manifest; activate with `"theme": "cc-my-pi-dark"`.
+
 - **/copy-code command** — Claude-style content picker (full response, per code
   block, always-full skip).
 
