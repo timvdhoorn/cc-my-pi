@@ -14,7 +14,7 @@
  * as `sessionCommandsEnabled` and `spinnerEnabled`. The `copyAlwaysFull`
  * preference (skip the picker) is read live on each invocation, no reload.
  */
-import { spawn } from "node:child_process";
+import { copyToClipboard as piCopyToClipboard } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export interface CopyDeps {
@@ -70,32 +70,6 @@ export function buildPickerOptions(
 	return options;
 }
 
-/** Spawn a copy binary, pipe text to stdin, resolve on exit 0. */
-function spawnCopy(cmd: string, args: string[], text: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(cmd, args);
-		let stderr = "";
-		child.on("error", reject);
-		child.stderr?.on("data", (chunk) => {
-			stderr += String(chunk);
-		});
-		child.on("close", (code) => {
-			if (code === 0) resolve();
-			else reject(new Error(stderr.trim() || `${cmd} exited with code ${code}`));
-		});
-		child.stdin?.end(text);
-	});
-}
-
-/** Platform default clipboard writer (no external deps). */
-function defaultCopyToClipboard(text: string): Promise<void> {
-	if (process.platform === "darwin") return spawnCopy("pbcopy", [], text);
-	if (process.platform === "win32") return spawnCopy("clip", [], text);
-	return spawnCopy("wl-copy", [], text).catch(() =>
-		spawnCopy("xclip", ["-selection", "clipboard"], text),
-	);
-}
-
 export function registerCopyCommand(
 	pi: ExtensionAPI,
 	enabled: boolean,
@@ -104,7 +78,9 @@ export function registerCopyCommand(
 ): void {
 	if (!enabled) return;
 
-	const copyToClipboard = deps?.copyToClipboard ?? defaultCopyToClipboard;
+	// Pi core's copyToClipboard: native addon / platform tools locally, and an
+	// OSC 52 escape for SSH/mosh sessions so the LOCAL clipboard gets the text.
+	const copyToClipboard = deps?.copyToClipboard ?? piCopyToClipboard;
 
 	pi.registerCommand("copy-code", {
 		description: "Copy the last response (or one of its code blocks) to the clipboard",
