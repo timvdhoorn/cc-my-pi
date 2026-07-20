@@ -53,6 +53,7 @@ import {
 } from "./cc-my-pi-settings-ui.js";
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
+import { registerSessionCommands } from "./session-commands.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
 import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import {
@@ -150,6 +151,8 @@ interface SettingsFile {
 	queueSteerEnabled?: boolean;
 	/** Claude-style spinner module (verb + status suffix). Defaults to true; reload required to change. */
 	spinnerEnabled?: boolean;
+	/** /exit and /clear session commands. Defaults to true; reload required to change. */
+	sessionCommandsEnabled?: boolean;
 	/** Marker: guided first-run setup wizard has run once (auto-start suppressed after). */
 	ccMyPiSetupDone?: boolean;
 	/** Statusline context gauge style. Read by the statusline package (name-shared, no import). Defaults to "claude". */
@@ -6169,6 +6172,7 @@ export default function (pi: ExtensionAPI) {
 	registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
 	registerBundledQueueSteer(pi, queueSteerEnabled);
 	registerBundledImagePaster(pi, imagePasterEnabled());
+	registerSessionCommands(pi, readSettings().sessionCommandsEnabled !== false);
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
@@ -6228,6 +6232,7 @@ export default function (pi: ExtensionAPI) {
 			queueSteerEnabled: queueSteerEnabled(),
 			branchPreset: getBranchPreset(),
 			spinnerEnabled: settings.spinnerEnabled !== false,
+			sessionCommandsEnabled: settings.sessionCommandsEnabled !== false,
 			spinnerVerbColor: String(settings.spinnerVerbColor || "borderAccent"),
 			spinnerStatusColor: String(settings.spinnerStatusColor || "muted"),
 			readOutputMode,
@@ -6344,6 +6349,11 @@ export default function (pi: ExtensionAPI) {
 			case "spinnerEnabled": {
 				writeSettingsKey("spinnerEnabled", value === "on");
 				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply spinner module change", "info");
+				break;
+			}
+			case "sessionCommandsEnabled": {
+				writeSettingsKey("sessionCommandsEnabled", value === "on");
+				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /exit + /clear change", "info");
 				break;
 			}
 			case "spinnerVerbColor":

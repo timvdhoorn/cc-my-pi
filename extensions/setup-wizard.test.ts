@@ -30,6 +30,7 @@ const baseSnapshot: CcToolsUiSnapshot = {
   doubleEscClearEnabled: true,
   queueSteerEnabled: true,
   branchPreset: "theme",
+  sessionCommandsEnabled: true,
   spinnerEnabled: true,
   spinnerVerbColor: "borderAccent",
   spinnerStatusColor: "muted",
@@ -203,4 +204,32 @@ test("spinner: default (no setting) registers its lifecycle handlers", () => {
   } finally {
     process.env.HOME = prevHome;
   }
+});
+
+test("session commands: registers /exit and /clear when enabled, nothing when disabled", async () => {
+  const { registerSessionCommands } = await import("./session-commands.ts");
+  const makePi = () => {
+    const commands = new Map<string, any>();
+    return {
+      pi: { registerCommand: (name: string, def: any) => commands.set(name, def) } as any,
+      commands,
+    };
+  };
+
+  const on = makePi();
+  registerSessionCommands(on.pi, true);
+  assert.deepEqual([...on.commands.keys()].sort(), ["clear", "exit"]);
+
+  const off = makePi();
+  registerSessionCommands(off.pi, false);
+  assert.equal(off.commands.size, 0);
+
+  const notices: string[] = [];
+  const ctx: any = {
+    waitForIdle: async () => {},
+    newSession: async () => ({ cancelled: true }),
+    ui: { notify: (msg: string) => notices.push(msg) },
+  };
+  await on.commands.get("clear").handler("", ctx);
+  assert.deepEqual(notices, ["New session cancelled"]);
 });

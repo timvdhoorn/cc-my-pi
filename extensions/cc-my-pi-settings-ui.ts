@@ -24,6 +24,7 @@ export interface CcToolsUiSnapshot {
 	doubleEscClearEnabled: boolean;
 	queueSteerEnabled: boolean;
 	branchPreset: BranchPreset;
+	sessionCommandsEnabled: boolean;
 	spinnerEnabled: boolean;
 	spinnerVerbColor: string;
 	spinnerStatusColor: string;
@@ -148,6 +149,16 @@ const SETTING_ORDER: Array<{
 			s.themeAdaptive
 				? "Borders/diffs/muted follow active pi theme"
 				: "Fixed Claude palette (ignore pi theme colors)",
+	},
+	{
+		id: "sessionCommandsEnabled",
+		label: "Session commands",
+		values: ["on", "off"],
+		current: (s) => (s.sessionCommandsEnabled ? "on" : "off"),
+		describe: (s) =>
+			s.sessionCommandsEnabled
+				? "/exit (clean shutdown) and /clear (alias for /new); off requires /reload"
+				: "/exit and /clear not registered (/reload required)",
 	},
 	{
 		id: "spinnerEnabled",

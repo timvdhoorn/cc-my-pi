@@ -15,6 +15,10 @@
 - **`spinnerEnabled` module toggle** — the Claude-style spinner can now be
   disabled (`/cc-my-pi setup` or the settings panel `Spinner` row), falling back
   to Pi's stock spinner. Reload required; default on.
+- **Session commands module** — `/exit` (clean shutdown) and `/clear` (alias
+  for `/new`, replaces the `pi-clear` npm package) moved in from the owner's
+  loose `~/.pi/agent/extensions/` files. Toggle with `sessionCommandsEnabled`
+  (panel row `Session commands`; reload required; default on).
 - **README** rewritten: install guide, modules-optional matrix with
   per-module settings examples, guided-setup docs.
 

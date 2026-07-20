@@ -32,6 +32,7 @@
     "extensions/spinner.ts",
     "extensions/cc-my-pi-settings-ui.ts",
     "extensions/image-paster.ts",
+    "extensions/session-commands.ts",
     "extensions/esc-steer.ts",
     "extensions/double-esc-clear.ts",
     "extensions/user-message-render.ts",
