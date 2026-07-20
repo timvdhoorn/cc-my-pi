@@ -22,9 +22,16 @@ closest to stock Pi.
 
 ![New-file create](assets/screenshots/new-file-create.png)
 
+**Settings panel** — `/cc-my-pi` with live ASCII preview
+
+
 **`/copy-code` content picker**
 
 ![Copy picker](assets/screenshots/copy-picker.png)
+
+**Statusline** — model/ctx gauge, git segment, MCP status (separate `packages/statusline`, see [pi-claude-preset](https://github.com/timvdhoorn/pi-claude-preset))
+
+![Statusline](assets/screenshots/statusline.png)
 
 <!--
 Drop PNGs into assets/screenshots/ with the names below, then delete the
@@ -39,7 +46,6 @@ matching checklist line — the embed uncomments itself by replacing this block:
 Screenshots to capture (drop PNGs in `assets/screenshots/`, then swap this
 checklist for the embeds in the HTML comment above):
 
-- [ ] `settings-panel.png` — `/cc-my-pi` panel with the ASCII preview visible
 - [ ] `setup-wizard.png` — `/cc-my-pi setup` mid-step, showing the `changed: …` example
 - [ ] `spinner.png` — spinner with verb + status suffix
 - [ ] `queue-steer.png` — queue widget with a steer/follow-up queued
