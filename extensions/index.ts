@@ -53,7 +53,7 @@ import {
 import { registerBundledImagePaster } from "./image-paster.js";
 import { registerBundledEscSteer } from "./esc-steer.js";
 import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
-import { ESC_CONTINUE_ABORT_KEY, registerBundledQueueSteer } from "./queue-steer/index.js";
+import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -2311,31 +2311,10 @@ function patchAssistantMessages(): void {
 	const originalRender = proto.render;
 	if (typeof originalRender === "function" && !proto[ASSISTANT_RENDER_PATCH_FLAG]) {
 		proto.render = function patchedAssistantMessageRender(width: number) {
-			// Esc abort-and-continue (queue-steer): the marker lands on the message
-			// AFTER the abort has already been rendered and cached, so marked
-			// messages bypass the cache — otherwise the stale "Operation aborted"
-			// line is served from cache forever.
-			const escContinueMarked = Boolean((this as any).lastMessage?.[ESC_CONTINUE_ABORT_KEY]);
-			const cached = escContinueMarked ? null : messageRenderCacheHit(this, width);
+			const cached = messageRenderCacheHit(this, width);
 			if (cached) return cached;
-			let lines = originalRender.call(this, width);
+			const lines = originalRender.call(this, width);
 			if (!Array.isArray(lines) || lines.length === 0) return lines;
-			// The queued message sends right after this abort, so the red
-			// "Operation aborted" line only confuses. Real user cancels are not
-			// marked and keep the message.
-			if (escContinueMarked) {
-				const filtered = lines.filter(
-					(line: string) => line.replace(/\x1b\[[0-9;]*m/g, "").trim() !== "Operation aborted",
-				);
-				if (filtered.length < lines.length) {
-					// Also drop the spacer that preceded the removed line when it
-					// leaves a trailing blank.
-					while (filtered.length > 0 && filtered[filtered.length - 1]!.trim() === "") {
-						filtered.pop();
-					}
-					lines = filtered;
-				}
-			}
 			if ((this as any).hasToolCalls) {
 				// Tool-call messages skip copy-zone processing, but still benefit from
 				// caching the rendered output to avoid re-rendering stable children.

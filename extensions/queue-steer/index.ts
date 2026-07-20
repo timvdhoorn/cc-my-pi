@@ -36,13 +36,6 @@ import {
 } from "./queue-state.ts";
 
 const WIDGET_ID = "queue-steer.timeline";
-/**
- * Marker set on the aborted assistant message when the abort was an Esc
- * abort-and-continue (queued message sends right after). cc-tools'
- * assistant-message render patch hides the confusing "Operation aborted"
- * line for these; real user cancels keep it.
- */
-export const ESC_CONTINUE_ABORT_KEY = "_ccQueueSteerEscContinueAbort";
 const EDITOR_FEATURES = Symbol.for("@tmustier/pi-editor-features");
 const QUEUE_STEER_FEATURE = "queue-steer";
 const NEXT_ROW_KEY = "alt+down";
@@ -654,9 +647,6 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 	pi.on("turn_end", async (event, ctx) => {
 		activeContext = ctx;
 		if (event.message.role === "assistant" && event.message.stopReason === "aborted") {
-			if (resumeOnSettle) {
-				(event.message as unknown as Record<string, unknown>)[ESC_CONTINUE_ABORT_KEY] = true;
-			}
 			if (queue.length > 0) paused = true;
 			renderQueue(ctx);
 			return;

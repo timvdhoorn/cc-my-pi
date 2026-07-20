@@ -22,12 +22,10 @@ in vendored files is a bug.
   3. Esc abort-and-continue: `resumeOnSettle` flag — the queued message
      auto-sends at `agent_settled` (upstream stays paused until explicit
      Enter); corresponding test rewritten to the new contract
-  4. `ESC_CONTINUE_ABORT_KEY` marker on the aborted assistant message when
-     the abort was abort-and-continue; cc-tools' assistant render patch
-     hides the "Operation aborted" line for marked messages only
-  5. queue-box help lines gain an `esc send` hint on the non-paused lanes
-  6. sibling import specifiers `./editor-render.ts` / `./queue-state.ts`
-  7. attribution header comment
+  4. queue-box help lines gain an `esc send now` hint on the non-paused
+     lanes
+  5. sibling import specifiers `./editor-render.ts` / `./queue-state.ts`
+  6. attribution header comment
 - **Replaced package entry**: `git:github.com/tmustier/pi-queue-steer`
   removed from `~/.pi/agent/settings.json` on 2026-07-20.
 

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { ESC_CONTINUE_ABORT_KEY, registerBundledQueueSteer } from "./index.ts";
+import { registerBundledQueueSteer } from "./index.ts";
 import { DeliveryQueue, QueueEditSession, type QueueLane } from "./queue-state.ts";
 
 test("keeps steering and follow-ups in independent FIFOs", () => {
@@ -503,24 +503,11 @@ test("Esc abort auto-resumes owned lanes once the aborted run settles", async ()
 	harness.editor.handleInput("escape");
 	assert.equal(harness.aborted, true);
 
-	const abortedMessage: Record<string, unknown> = { role: "assistant", stopReason: "aborted" };
-	await harness.emit("turn_end", { message: abortedMessage });
-	// Marked so cc-tools hides the "Operation aborted" line for this message.
-	assert.equal(abortedMessage[ESC_CONTINUE_ABORT_KEY], true);
+	await harness.emit("turn_end", { message: { role: "assistant", stopReason: "aborted" } });
 	await harness.emit("agent_end");
 	harness.setIdle(true);
 	await harness.emit("agent_settled");
 	assert.equal(harness.sent[0]?.content, "auto-send after abort");
-});
-
-test("a plain abort (no Esc continue) leaves the aborted message unmarked", async () => {
-	const harness = createHarness();
-	await harness.emit("session_start");
-	await enqueue(harness, "followUp", "still queued");
-
-	const abortedMessage: Record<string, unknown> = { role: "assistant", stopReason: "aborted" };
-	await harness.emit("turn_end", { message: abortedMessage });
-	assert.equal(abortedMessage[ESC_CONTINUE_ABORT_KEY], undefined);
 });
 
 test("empty Enter promotes the oldest follow-up to steering while busy", async () => {
