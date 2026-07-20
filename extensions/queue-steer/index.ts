@@ -9,6 +9,10 @@
  * - Esc while busy only pauses/aborts when the chatbox is EMPTY — a typed
  *   draft leaves Esc to double-esc-clear (hint + second-Esc clear), so a
  *   draft never costs the user the running turn (decided 2026-07-20);
+ * - that empty-chatbox Esc is abort-AND-continue: the queued message sends
+ *   as soon as the aborted run settles (upstream stays paused until an
+ *   explicit Enter). Self-contained via `resumeOnSettle` because the editor
+ *   wrap order vs esc-steer is not guaranteed;
  * - shares the upstream QUEUE_STEER_FEATURE marker, so the standalone
  *   package and this bundled copy are mutually exclusive.
  */
@@ -232,6 +236,8 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 	let editorInstallTimer: ReturnType<typeof setTimeout> | undefined;
 	let renderingInline = false;
 	let paused = false;
+	/** Esc abort-and-continue: send the queued message once the run settles. */
+	let resumeOnSettle = false;
 	let settingsManager: SettingsManager | undefined;
 
 	const queueModes = (): QueueModes => ({
@@ -557,7 +563,12 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 					// empty chatbox may pause the queue and abort the run.
 					!editor.getText().trim()
 				) {
+					// Abort-and-continue: the queued message sends as soon as the
+					// aborted run settles. Self-contained on purpose — the editor
+					// wrap order vs esc-steer is not guaranteed, so we cannot rely
+					// on esc-steer seeing this Esc and injecting a resume submit.
 					paused = true;
+					resumeOnSettle = true;
 					ctx.abort();
 					renderQueue(ctx);
 					return;
@@ -659,6 +670,15 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 
 	pi.on("agent_settled", (_event, ctx) => {
 		activeContext = ctx;
+		if (resumeOnSettle && !editSession && queue.length > 0 && ctx.isIdle()) {
+			// Esc abort-and-continue: unpause and send the queued message now.
+			resumeOnSettle = false;
+			paused = false;
+			renderQueue(ctx);
+			dispatchFromIdle(ctx);
+			return;
+		}
+		resumeOnSettle = false;
 		renderQueue(ctx);
 		if (!paused && !editSession && queue.length > 0 && ctx.isIdle()) dispatchFromIdle(ctx);
 	});
@@ -672,6 +692,7 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 		editSession = undefined;
 		settingsManager = undefined;
 		paused = false;
+		resumeOnSettle = false;
 		queue.clear();
 	});
 }

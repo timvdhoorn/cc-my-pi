@@ -493,10 +493,13 @@ test("editing a later follow-up does not block its lane head", async () => {
 	assert.equal(harness.editor.getText(), "second edited");
 });
 
-test("abort pauses both owned lanes and empty Enter explicitly resumes", async () => {
+// Bundled behavior differs from upstream here (decided 2026-07-20): Esc on an
+// empty chatbox aborts AND continues — the queued message sends as soon as the
+// aborted run settles, instead of staying paused until an explicit Enter.
+test("Esc abort auto-resumes owned lanes once the aborted run settles", async () => {
 	const harness = createHarness();
 	await harness.emit("session_start");
-	await enqueue(harness, "followUp", "do not auto-send");
+	await enqueue(harness, "followUp", "auto-send after abort");
 	harness.editor.handleInput("escape");
 	assert.equal(harness.aborted, true);
 
@@ -504,11 +507,7 @@ test("abort pauses both owned lanes and empty Enter explicitly resumes", async (
 	await harness.emit("agent_end");
 	harness.setIdle(true);
 	await harness.emit("agent_settled");
-	assert.equal(harness.sent.length, 0);
-	assert.match(renderWidget(harness), /paused/);
-
-	harness.editor.handleInput("enter");
-	assert.equal(harness.sent[0]?.content, "do not auto-send");
+	assert.equal(harness.sent[0]?.content, "auto-send after abort");
 });
 
 test("empty Enter promotes the oldest follow-up to steering while busy", async () => {
@@ -660,4 +659,19 @@ test("bundled draft guard: busy + empty chatbox: escape pauses and aborts", asyn
 
 	harness.editor.handleInput("escape");
 	assert.equal(harness.aborted, true);
+});
+
+test("Esc abort-and-continue: queued steer sends when the aborted run settles", async () => {
+	const harness = createHarness();
+	await harness.emit("session_start");
+	harness.setIdle(false);
+	await enqueue(harness, "steer", "continue with this");
+
+	harness.editor.handleInput("escape");
+	assert.equal(harness.aborted, true);
+	assert.equal(harness.sent.length, 0);
+
+	harness.setIdle(true);
+	await harness.emit("agent_settled");
+	assert.equal(harness.sent[0]?.content, "continue with this");
 });

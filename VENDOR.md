@@ -19,8 +19,11 @@ in vendored files is a bug.
      gate (widget render + handleInput interception check `isEnabled()`)
   2. draft-aware Esc guard in the busy abort branch
      (`!editor.getText().trim()`)
-  3. sibling import specifiers `./editor-render.ts` / `./queue-state.ts`
-  4. attribution header comment
+  3. Esc abort-and-continue: `resumeOnSettle` flag — the queued message
+     auto-sends at `agent_settled` (upstream stays paused until explicit
+     Enter); corresponding test rewritten to the new contract
+  4. sibling import specifiers `./editor-render.ts` / `./queue-state.ts`
+  5. attribution header comment
 - **Replaced package entry**: `git:github.com/tmustier/pi-queue-steer`
   removed from `~/.pi/agent/settings.json` on 2026-07-20.
 
