@@ -18,6 +18,10 @@
  * `isEnabled` getter so the /cc-tools settings toggle takes effect without a
  * Pi reload. Adds an `EDITOR_FEATURES` marker (absent in the standalone
  * package) so a second bundled install does not double-wrap.
+ *
+ * First Esc also shows a transient, right-aligned "Esc again to clear" hint
+ * above the editor, auto-hiding after the second-Esc window (or sooner on
+ * clear / other input).
  */
 import {
 	CustomEditor,
@@ -27,10 +31,14 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
-const DOUBLE_ESC_MS = 800;
+/** Second-Esc accept window — also how long the hint stays visible. */
+const DOUBLE_ESC_MS = 2_000;
 
 const EDITOR_FEATURES = Symbol.for("@tmustier/pi-editor-features");
 const FEATURE = "double-esc-clear";
+
+const HINT_WIDGET_KEY = "cc-tools-double-esc-hint";
+const HINT_TEXT = "Esc again to clear";
 
 type EditorFactory = NonNullable<ReturnType<ExtensionContext["ui"]["getEditorComponent"]>>;
 type ComposedEditorFactory = EditorFactory & { [EDITOR_FEATURES]?: ReadonlySet<string> };
@@ -52,6 +60,35 @@ export function registerBundledDoubleEscClear(
 	pi: ExtensionAPI,
 	isEnabled: () => boolean,
 ): void {
+	let hintTimer: ReturnType<typeof setTimeout> | undefined;
+	let hintCtx: ExtensionContext | undefined;
+
+	const hideHint = (): void => {
+		if (hintTimer) clearTimeout(hintTimer);
+		hintTimer = undefined;
+		hintCtx?.ui.setWidget(HINT_WIDGET_KEY, undefined);
+		hintCtx = undefined;
+	};
+
+	const showHint = (ctx: ExtensionContext): void => {
+		hideHint();
+		hintCtx = ctx;
+		ctx.ui.setWidget(
+			HINT_WIDGET_KEY,
+			() => ({
+				render(width: number): string[] {
+					const pad = Math.max(0, width - HINT_TEXT.length);
+					return [`${" ".repeat(pad)}\x1b[2m${HINT_TEXT}\x1b[0m`];
+				},
+				invalidate(): void {
+					// Static content; nothing to invalidate.
+				},
+			}),
+			{ placement: "aboveEditor" },
+		);
+		hintTimer = setTimeout(hideHint, DOUBLE_ESC_MS);
+	};
+
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
 
@@ -94,17 +131,20 @@ export function registerBundledDoubleEscClear(
 						// no-op for this case, so we do not fall through.
 						editor.setText("");
 						lastEscapeTime = 0;
+						hideHint();
 						return;
 					}
 					// First Esc: arm timer, then fall through so bash-running /
 					// other app Escape handlers still run when applicable.
 					lastEscapeTime = now;
+					showHint(ctx);
 					originalHandleInput(data);
 					return;
 				}
 
 				if (!isEscape) {
 					lastEscapeTime = 0;
+					if (hintTimer) hideHint();
 				}
 
 				originalHandleInput(data);
@@ -114,5 +154,9 @@ export function registerBundledDoubleEscClear(
 		}) as ComposedEditorFactory;
 		factory[EDITOR_FEATURES] = new Set([...features, FEATURE]);
 		ctx.ui.setEditorComponent(factory);
+	});
+
+	pi.on("session_shutdown", () => {
+		hideHint();
 	});
 }

@@ -41,6 +41,7 @@ function makePi() {
 /** ctx whose editor component can be read/replaced and whose idle state is mutable. */
 function makeCtx(previous?: any) {
   const state = { current: previous, idle: true, setCalls: 0 };
+  const widgets = new Map<string, unknown>();
   const ctx: any = {
     mode: "tui",
     isIdle: () => state.idle,
@@ -51,10 +52,14 @@ function makeCtx(previous?: any) {
         state.current = factory;
         state.setCalls += 1;
       },
+      setWidget: (key: string, content: unknown) => {
+        if (content === undefined) widgets.delete(key);
+        else widgets.set(key, content);
+      },
       notify: () => {},
     },
   };
-  return { ctx, state };
+  return { ctx, state, widgets };
 }
 
 test("double-esc-clear: two Esc within 800ms clears a non-empty draft", () => {
@@ -73,7 +78,7 @@ test("double-esc-clear: two Esc within 800ms clears a non-empty draft", () => {
   assert.equal(editor.getText(), "");
 });
 
-test("double-esc-clear: two Esc 900ms apart does not clear", async () => {
+test("double-esc-clear: outside the window does not clear", async () => {
   const { pi, handlers } = makePi();
   registerBundledDoubleEscClear(pi, () => true);
   const { ctx } = makeCtx();
@@ -83,9 +88,73 @@ test("double-esc-clear: two Esc 900ms apart does not clear", async () => {
   editor.setText("world");
 
   editor.handleInput(ESC);
-  await sleep(900);
-  editor.handleInput(ESC); // outside 800ms window: re-arms, does not clear
+  await sleep(2100);
+  editor.handleInput(ESC); // outside window: re-arms, does not clear
   assert.equal(editor.getText(), "world");
+});
+
+test("double-esc-clear: first Esc shows a right-aligned hint above the editor", () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+  const { ctx, widgets } = makeCtx();
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  editor.setText("hello");
+
+  editor.handleInput(ESC);
+  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+
+  const factory: any = widgets.get("cc-tools-double-esc-hint");
+  const component = factory(stubTui, stubTheme);
+  const [line] = component.render(80);
+  assert.ok(line.endsWith("Esc again to clear\x1b[0m"));
+  assert.ok(line.includes(" ".repeat(80 - "Esc again to clear".length)));
+});
+
+test("double-esc-clear: second Esc clears draft and hides the hint", () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+  const { ctx, widgets } = makeCtx();
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  editor.setText("hello");
+
+  editor.handleInput(ESC);
+  editor.handleInput(ESC);
+  assert.equal(editor.getText(), "");
+  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+});
+
+test("double-esc-clear: hint auto-hides after the window elapses", async () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+  const { ctx, widgets } = makeCtx();
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  editor.setText("hello");
+
+  editor.handleInput(ESC);
+  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+  await sleep(2100);
+  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
+});
+
+test("double-esc-clear: typing after Esc hides the hint", () => {
+  const { pi, handlers } = makePi();
+  registerBundledDoubleEscClear(pi, () => true);
+  const { ctx, widgets } = makeCtx();
+  handlers.get("session_start")!({}, ctx);
+
+  const editor: any = ctx.ui.getEditorComponent()(stubTui, stubTheme, stubKb);
+  editor.setText("hello");
+
+  editor.handleInput(ESC);
+  assert.ok(widgets.has("cc-tools-double-esc-hint"));
+  editor.handleInput("a");
+  assert.ok(!widgets.has("cc-tools-double-esc-hint"));
 });
 
 test("double-esc-clear: disabled gate lets Esc pass through unchanged", () => {
