@@ -44,8 +44,10 @@ checklist for the embeds in the HTML comment above):
    }
    ```
 3. Run `/reload` (or restart Pi) to load it.
-4. First load auto-starts the guided setup wizard (`/cc-my-pi setup`) — walk
-   through it once, or press Esc to skip and configure later.
+4. First load auto-starts the guided setup wizard (`/cc-my-pi setup`). Its
+   intro offers three choices: `enter` to start, `s` to skip for now (it
+   re-opens next session), or `x` to not ask again. Re-run it any time with
+   `/cc-my-pi setup`.
 
 To uninstall, remove the path from `packages` and `/reload`.
 

@@ -49,6 +49,7 @@ import {
 	type CcToolsSettingsController,
 	type CcToolsUiSnapshot,
 	type OutputMode,
+	type SetupWizardOutcome,
 	type ToolStyle,
 } from "./cc-my-pi-settings-ui.js";
 import { registerBundledImagePaster } from "./image-paster.js";
@@ -6497,8 +6498,9 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (sub === "setup") {
-				await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
-				writeSettingsKey("ccMyPiSetupDone", true);
+				const outcome = await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
+				// "skip for now" leaves the marker unset so the next session re-opens.
+				if (outcome !== "skip-once") writeSettingsKey("ccMyPiSetupDone", true);
 				return;
 			}
 
@@ -6776,15 +6778,18 @@ export default function (pi: ExtensionAPI) {
 			scheduleDeferredChromeRebind(ctx, 120);
 		}
 		if (readSettings().ccMyPiSetupDone !== true) {
-			// First load: run the guided setup once. Esc skips; either way the
-			// marker is written so it never auto-opens again. /cc-my-pi setup re-runs it.
-			// The 250ms defer lets theme extensions and the chrome rebind settle first.
+			// First load: run the guided setup once. Intro "skip for now" leaves the
+			// marker unset so the next session re-opens; "don't ask again", finishing
+			// the steps, or a crash all write the marker so it never auto-opens again.
+			// /cc-my-pi setup re-runs it. The 250ms defer lets theme extensions and
+			// the chrome rebind settle first.
 			setTimeout(() => {
 				void (async () => {
+					let outcome: SetupWizardOutcome = "completed";
 					try {
-						await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
+						outcome = await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
 					} finally {
-						writeSettingsKey("ccMyPiSetupDone", true);
+						if (outcome !== "skip-once") writeSettingsKey("ccMyPiSetupDone", true);
 					}
 				})();
 			}, 250);

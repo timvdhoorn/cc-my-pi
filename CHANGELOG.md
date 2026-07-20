@@ -9,9 +9,27 @@
 
 - **Guided setup wizard** — `/cc-my-pi setup` walks through every setting one at
   a time, applying changes live and showing the `changed: <label> → <value>`
-  example preview for each. It auto-runs once on first load (Esc skips; the
-  `ccMyPiSetupDone` marker suppresses further auto-opens) and is re-runnable any
-  time via the command.
+  example preview for each. It opens on an intro screen offering `enter` start ·
+  `s` skip for now · `x` don't ask again, then auto-runs once on first load and
+  is re-runnable any time via the command. "Skip for now" leaves the
+  `ccMyPiSetupDone` marker unset so the next session re-opens; finishing the
+  steps or "don't ask again" writes the marker to suppress further auto-opens.
+
+### Changed
+
+- **Wizard layout is now jump-free** — every frame renders to one constant
+  height, so cycling a value (`←/→`) no longer shifts lines vertically.
+- **Wizard shows your current value as the selected default on every step**,
+  including custom hex/numeric values set outside the curated list (e.g. a
+  `spinner verb` hex color); the first `←/→` moves one step away instead of
+  overwriting it from the list head.
+
+### Fixed
+
+- **Esc now works inside the wizard.** Under the kitty keyboard protocol Pi
+  negotiates, Escape arrives as the CSI-u sequence `\x1b[27u`, which the old raw
+  `data === "\x1b"` check never matched. The wizard now matches the same
+  `tui.select.cancel` binding the settings panel uses (arrow keys still excluded).
 - **`spinnerEnabled` module toggle** — the Claude-style spinner can now be
   disabled (`/cc-my-pi setup` or the settings panel `Spinner` row), falling back
   to Pi's stock spinner. Reload required; default on.

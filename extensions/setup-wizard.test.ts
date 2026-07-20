@@ -105,6 +105,68 @@ test("wizard: without UI notifies TUI-required and never opens an overlay", asyn
   assert.equal(notifies[0]![1], "error");
 });
 
+/** Advance (Enter) until the step header names `label`; returns the component. */
+function advanceToStep(component: any, label: string): void {
+  for (let i = 0; i < 40; i++) {
+    if ((component.render(80)[0] as string).includes(label)) return;
+    component.handleInput("\r");
+  }
+  assert.fail(`never reached step "${label}"`);
+}
+
+test("wizard: intro screen offers start / skip-now / skip-forever", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const intro = getComponent().render(80).join("\n");
+  assert.ok(intro.includes("cc-my-pi setup"), "intro shows the title");
+  assert.ok(
+    intro.includes("enter start · s skip for now · x don't ask again"),
+    "intro shows the key legend",
+  );
+});
+
+test("wizard: intro 's' resolves skip-once", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+  const done = openCcToolsSetupWizard(ctx, controller);
+  getComponent().handleInput("s");
+  assert.equal(await done, "skip-once");
+});
+
+test("wizard: intro 'x' resolves skip-forever", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+  const done = openCcToolsSetupWizard(ctx, controller);
+  getComponent().handleInput("x");
+  assert.equal(await done, "skip-forever");
+});
+
+test("wizard: intro Esc (raw and kitty CSI-u) resolves skip-once", async () => {
+  for (const esc of [ESC, "\x1b[27u"]) {
+    const { controller } = makeController();
+    const { ctx, getComponent } = makeUiCtx();
+    const done = openCcToolsSetupWizard(ctx, controller);
+    getComponent().handleInput(esc);
+    assert.equal(await done, "skip-once", `esc encoding ${JSON.stringify(esc)}`);
+  }
+});
+
+test("wizard: Enter on intro enters steps; Esc there resolves completed", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  const done = openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  component.handleInput("\r"); // leave intro
+  assert.match(component.render(80)[0] as string, /step 1\//);
+
+  component.handleInput("\x1b[27u"); // kitty-encoded Esc mid-steps
+  assert.equal(await done, "completed");
+});
+
 test("wizard: cycling a value applies it live and shows the changed preview", async () => {
   const { controller, applyCalls } = makeController();
   const { ctx, getComponent } = makeUiCtx();
@@ -112,6 +174,7 @@ test("wizard: cycling a value applies it live and shows the changed preview", as
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
+  component.handleInput("\r"); // pass the intro
   component.handleInput(" "); // space cycles the focused (first) setting forward
   assert.deepEqual(applyCalls.at(-1), ["toolBackground", "transparent"]);
 
@@ -122,7 +185,7 @@ test("wizard: cycling a value applies it live and shows the changed preview", as
   );
 
   component.handleInput(ESC); // finish
-  await done;
+  assert.equal(await done, "completed");
 });
 
 test("wizard: steps derive from SETTING_ORDER and enter through all closes it", async () => {
@@ -132,17 +195,12 @@ test("wizard: steps derive from SETTING_ORDER and enter through all closes it", 
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
+  component.handleInput("\r"); // pass the intro
   const total = stepCount(component);
   assert.ok(total >= 18, `expected all settings as steps, got ${total}`);
 
-  let resolved = false;
-  void done.then(() => {
-    resolved = true;
-  });
-
-  for (let i = 0; i < total; i++) component.handleInput("\r"); // enter advances, last one finishes
-  await done;
-  assert.equal(resolved, true);
+  for (let i = 0; i < total; i++) component.handleInput("\r"); // last one finishes
+  assert.equal(await done, "completed");
 });
 
 test("wizard: back navigation does not go before the first step", async () => {
@@ -152,6 +210,7 @@ test("wizard: back navigation does not go before the first step", async () => {
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
+  component.handleInput("\r"); // pass the intro
   component.handleInput("b"); // already at step 1 — no-op
   assert.match(component.render(80)[0] as string, /step 1\//);
 
@@ -162,6 +221,57 @@ test("wizard: back navigation does not go before the first step", async () => {
 
   component.handleInput(ESC);
   await done;
+});
+
+test("wizard: every frame renders to a constant height", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  const introHeight = component.render(80).length;
+  component.handleInput("\r"); // into steps (step 1)
+  const step1Height = component.render(80).length;
+  component.handleInput(" "); // cycle Tool style — shifts the preview shape
+  const cycledHeight = component.render(80).length;
+  component.handleInput("\r"); // step 2: Group tools
+  component.handleInput(" "); // groupToolCalls off — different preview tree
+  const groupedOffHeight = component.render(80).length;
+
+  assert.equal(step1Height, introHeight, "step 1 matches intro height");
+  assert.equal(cycledHeight, introHeight, "cycling a value keeps the height");
+  assert.equal(groupedOffHeight, introHeight, "a different preview shape keeps the height");
+});
+
+test("wizard: a custom out-of-list value is the selected default and cycles into the list", async () => {
+  const custom = "#d77757";
+  const snap: CcToolsUiSnapshot = { ...baseSnapshot, spinnerVerbColor: custom };
+  const applyCalls: Array<[string, string]> = [];
+  const controller: CcToolsSettingsController = {
+    getSnapshot: () => ({ ...snap }),
+    apply(id, value) {
+      applyCalls.push([String(id), value]);
+      (snap as any)[id as keyof CcToolsUiSnapshot] = value;
+    },
+  };
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+  component.handleInput("\r"); // pass the intro
+  advanceToStep(component, "Spinner verb");
+
+  const atStep = component.render(80).join("\n");
+  assert.ok(atStep.includes(`● ${custom}`), "custom value is the selected default");
+  assert.equal(applyCalls.length, 0, "entering steps without cycling changes nothing");
+
+  component.handleInput(" "); // one cycle forward
+  assert.deepEqual(
+    applyCalls.at(-1),
+    ["spinnerVerbColor", "borderAccent"],
+    "cycling lands on the first curated value",
+  );
 });
 
 /** Fake pi that records on() registrations. */

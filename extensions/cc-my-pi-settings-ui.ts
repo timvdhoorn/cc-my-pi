@@ -646,26 +646,65 @@ export async function openCcToolsSettingsPanel(
 	);
 }
 
+export type SetupWizardOutcome = "completed" | "skip-once" | "skip-forever";
+
+// UX constant: every wizard frame renders to exactly this many lines so no line
+// shifts vertically when cycling a value. Raise once if previews grow taller —
+// never make it dynamic again (that reintroduces the jump).
+const WIZARD_BODY_LINES = 26;
+// Fixed header height (title, hints, blank, valueLine, describe, blank).
+const WIZARD_HEADER_LINES = 6;
+
+/** Pad with empty lines or hard-truncate so `lines` is exactly `total` long. */
+function padToHeight(lines: string[], total: number): string[] {
+	const out = lines.slice(0, total);
+	while (out.length < total) out.push("");
+	return out;
+}
+
+/** Single-line truncate (with ellipsis) so describe never wraps and shifts rows. */
+function truncateLine(text: string, width: number): string {
+	if (width <= 0 || text.length <= width) return text;
+	return `${text.slice(0, Math.max(0, width - 1))}…`;
+}
+
 /**
- * Guided first-run walkthrough: the settings overlay restricted to one row at a
- * time, in SETTING_ORDER order. Each step applies changes live through the same
- * controller as the panel and shows buildCcToolsPreview with the current row
- * focused, so every change renders its `changed: <label> → <value>` example.
- * Resolves when the user finishes (Esc or Enter on the last step). The caller
- * owns the "setup done" marker — this component stays settings-file-agnostic.
+ * The step's value list with the live current value guaranteed present as the
+ * selected default — even a custom hex/numeric value outside the curated list
+ * (e.g. a `#d77757` set via `/cc-my-pi spinner verb`). Cycling then starts from
+ * the user's actual value instead of silently overwriting it from index 0.
+ */
+function wizardStepValues(def: (typeof SETTING_ORDER)[number], snap: CcToolsUiSnapshot): string[] {
+	const cur = def.current(snap);
+	return def.values.includes(cur) ? def.values : [cur, ...def.values];
+}
+
+/**
+ * Guided first-run walkthrough: an intro screen, then the settings restricted to
+ * one row at a time in SETTING_ORDER order. Each step applies changes live
+ * through the same controller as the panel and shows buildCcToolsPreview with the
+ * current row focused. Resolves to an outcome the caller uses to decide the
+ * "setup done" marker: intro `s`/Esc → "skip-once" (re-open next session), `x` →
+ * "skip-forever", finishing the steps (Esc or Enter past the last) → "completed".
+ * This component stays settings-file-agnostic.
  */
 export async function openCcToolsSetupWizard(
 	ctx: any,
 	controller: CcToolsSettingsController,
-): Promise<void> {
+): Promise<SetupWizardOutcome> {
 	if (!ctx?.hasUI) {
 		ctx?.ui?.notify?.("/cc-my-pi setup requires TUI mode", "error");
-		return;
+		return "skip-once";
 	}
+
+	// ctx.ui.custom's done() takes no value in the current typings; capture the
+	// outcome in a local set before each done() and return it after awaiting.
+	let outcome: SetupWizardOutcome = "completed";
 
 	await ctx.ui.custom(
 		(_tui: unknown, theme: Theme, _kb: unknown, done: (value?: undefined) => void) => {
 			let snap = controller.getSnapshot();
+			let phase: "intro" | "steps" = "intro";
 			let stepIndex = 0;
 			const total = SETTING_ORDER.length;
 			let cacheWidth: number | undefined;
@@ -677,13 +716,28 @@ export async function openCcToolsSetupWizard(
 				cacheLines = undefined;
 			};
 
+			// Esc arrives as a bare byte in legacy mode and as the kitty CSI-u
+			// sequence `\x1b[27u` under the keyboard protocol pi negotiates; the raw
+			// `data === "\x1b"` check the wizard used before never saw the kitty form,
+			// so Esc looked dead. tui.select.cancel is the same binding SettingsList
+			// (the working panel) matches, and it rejects arrow keys like `\x1b[C`.
+			const isCancel = (data: string): boolean =>
+				kb.matches(data, "tui.select.cancel") || data === "\x1b";
+
+			const finish = (result: SetupWizardOutcome) => {
+				outcome = result;
+				done(undefined);
+			};
+
 			const cycle = (direction: 1 | -1) => {
 				const def = SETTING_ORDER[stepIndex];
-				if (!def?.values.length) return;
+				if (!def) return;
+				const values = wizardStepValues(def, snap);
+				if (!values.length) return;
 				const cur = def.current(snap);
-				const idx = def.values.indexOf(cur);
+				const idx = values.indexOf(cur);
 				const base = idx >= 0 ? idx : 0;
-				const next = def.values[(base + direction + def.values.length) % def.values.length]!;
+				const next = values[(base + direction + values.length) % values.length]!;
 				controller.apply(def.id, next, ctx);
 				snap = controller.getSnapshot();
 				invalidateCache();
@@ -691,10 +745,7 @@ export async function openCcToolsSetupWizard(
 			};
 
 			const advance = () => {
-				if (stepIndex >= total - 1) {
-					done(undefined);
-					return;
-				}
+				if (stepIndex >= total - 1) return finish("completed");
 				stepIndex += 1;
 				invalidateCache();
 				ctx.ui.requestRender?.();
@@ -707,30 +758,67 @@ export async function openCcToolsSetupWizard(
 				ctx.ui.requestRender?.();
 			};
 
+			const renderIntro = (width: number): string[] => {
+				const titleText = "cc-my-pi setup";
+				const body = [
+					"Guided walkthrough of every cc-my-pi setting — ~19 steps.",
+					"Changes apply live and are saved to ~/.pi/settings.json.",
+					"Open /cc-my-pi anytime to change everything later; re-run with /cc-my-pi setup.",
+				];
+				const lines = [
+					safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText),
+					"",
+					...body.map((l) => safeFg(theme, "muted", truncateLine(l, width))),
+					"",
+					safeFg(theme, "muted", truncateLine("enter start · s skip for now · x don't ask again", width)),
+				];
+				return padToHeight(lines, WIZARD_BODY_LINES);
+			};
+
+			const renderStep = (width: number): string[] => {
+				const def = SETTING_ORDER[stepIndex]!;
+				const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${total}: ${def.label}`;
+				const title = safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText);
+				const hints = safeFg(theme, "muted", "←/→ or space change · enter next · b back · esc finish");
+				const cur = def.current(snap);
+				const values = wizardStepValues(def, snap);
+				const valueLine = values
+					.map((v) => (v === cur ? safeFg(theme, "accent", `● ${v}`) : safeFg(theme, "dim", `  ${v}`)))
+					.join("   ");
+				const describe = safeFg(theme, "dim", truncateLine(def.describe(snap), width));
+				const header = padToHeight([title, hints, "", valueLine, describe, ""], WIZARD_HEADER_LINES);
+				const preview = padToHeight(
+					buildCcToolsPreview(snap, theme, def.id),
+					WIZARD_BODY_LINES - WIZARD_HEADER_LINES,
+				);
+				return [...header, ...preview];
+			};
+
 			return {
 				invalidate() {
 					invalidateCache();
 				},
 				handleInput(data: string) {
+					if (phase === "intro") {
+						if (data === "\r" || data === "\n") {
+							phase = "steps";
+							invalidateCache();
+							ctx.ui.requestRender?.();
+							return;
+						}
+						if (data === "x") return finish("skip-forever");
+						if (data === "s" || isCancel(data)) return finish("skip-once");
+						return;
+					}
 					if (kb.matches(data, "tui.editor.cursorLeft") || data === "h") return cycle(-1);
 					if (kb.matches(data, "tui.editor.cursorRight") || data === "l" || data === " ") return cycle(1);
 					if (data === "\r" || data === "\n") return advance();
 					if (data === "b") return back();
-					if (data === "\x1b") return done(undefined);
+					if (isCancel(data)) return finish("completed");
 				},
 				render(width: number) {
 					if (cacheLines && cacheWidth === width) return cacheLines;
-					const def = SETTING_ORDER[stepIndex]!;
-					const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${total}: ${def.label}`;
-					const title = safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText);
-					const hints = safeFg(theme, "muted", "←/→ or space change · enter next · b back · esc finish");
-					const cur = def.current(snap);
-					const valueLine = def.values
-						.map((v) => (v === cur ? safeFg(theme, "accent", `● ${v}`) : safeFg(theme, "dim", `  ${v}`)))
-						.join("   ");
-					const describe = safeFg(theme, "dim", def.describe(snap));
-					const preview = buildCcToolsPreview(snap, theme, def.id);
-					const out = [title, hints, "", valueLine, describe, "", ...preview];
+					const out = phase === "intro" ? renderIntro(width) : renderStep(width);
 					cacheWidth = width;
 					cacheLines = out;
 					return out;
@@ -747,4 +835,6 @@ export async function openCcToolsSetupWizard(
 			},
 		},
 	);
+
+	return outcome;
 }
