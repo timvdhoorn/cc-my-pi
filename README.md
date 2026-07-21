@@ -8,47 +8,7 @@ Claude-style diffs, status dots, and borders) is the base module: it's on
 whenever the package is loaded, and `toolBackground: "default"` gets you
 closest to stock Pi.
 
-## Screenshots
-
-**Startup header** — animated π mascot, model/effort/cwd, Loaded counts panel
-
 ![Startup header](assets/screenshots/startup-header.png)
-
-**Tool rendering** — grouped tool rows (⏺ dots, collapsed `∴ Thinking`, spinner with esc hint)
-
-![Tool rendering](assets/screenshots/tool-rendering.png)
-
-**Diff rendering** — side-by-side edit/write diff
-
-![Diff rendering](assets/screenshots/diff-rendering.png)
-
-**New-file create** — plain new-file preview with line numbers
-
-![New-file create](assets/screenshots/new-file-create.png)
-
-**Settings panel** — `/cc-my-pi` with live ASCII preview
-
-![Settings panel](assets/screenshots/settings-panel.png)
-
-**`/copy-code` content picker**
-
-![Copy picker](assets/screenshots/copy-picker.png)
-
-**Statusline** — model/ctx gauge, git segment, MCP status
-
-![Statusline](assets/screenshots/statusline.png)
-
-**Spinner** — Claude-style verb + esc hint
-
-![Spinner](assets/screenshots/spinner.png)
-
-**Queue steer** — visible steering/follow-up queue with inline editing
-
-![Queue steer](assets/screenshots/queue-steer.png)
-
-**Setup wizard** — first-run intro: standard vs custom
-
-![Setup wizard](assets/screenshots/setup-wizard.png)
 
 ## Install
 
@@ -88,6 +48,44 @@ Every subcommand hangs off the single root command `/cc-my-pi`:
 ```text
 /cc-my-pi ui|settings|status|outlines|transparent|default|group|detail|branch|diff|theme|spinner|setup
 ```
+
+## Screenshots
+
+**Tool rendering** — grouped tool rows (⏺ dots, collapsed `∴ Thinking`, spinner with esc hint)
+
+![Tool rendering](assets/screenshots/tool-rendering.png)
+
+**Diff rendering** — side-by-side edit/write diff
+
+![Diff rendering](assets/screenshots/diff-rendering.png)
+
+**New-file create** — plain new-file preview with line numbers
+
+![New-file create](assets/screenshots/new-file-create.png)
+
+**Settings panel** — `/cc-my-pi` with live ASCII preview
+
+![Settings panel](assets/screenshots/settings-panel.png)
+
+**`/copy-code` content picker**
+
+![Copy picker](assets/screenshots/copy-picker.png)
+
+**Statusline** — model/ctx gauge, git segment, MCP status
+
+![Statusline](assets/screenshots/statusline.png)
+
+**Spinner** — Claude-style verb + esc hint
+
+![Spinner](assets/screenshots/spinner.png)
+
+**Queue steer** — visible steering/follow-up queue with inline editing
+
+![Queue steer](assets/screenshots/queue-steer.png)
+
+**Setup wizard** — first-run intro: standard vs custom
+
+![Setup wizard](assets/screenshots/setup-wizard.png)
 
 ## Modules
 
