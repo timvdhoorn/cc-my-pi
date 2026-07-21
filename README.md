@@ -66,9 +66,10 @@ closest to stock Pi.
    intro asks whether you want the **standard** setup (recommended defaults,
    you only pick optional extensions) or **custom** (walk through every
    setting) — use `←/→` to choose. `s` skips for now (re-opens next session)
-   and `x` never asks again. Both paths first step through the optional
-   companion packages (see [Goes well with](#goes-well-with)) — each shows its
-   install state and can be installed on the spot; only **custom** then
+   and `x` never asks again. Both paths then show a single **optional
+   extensions** checkbox screen (see [Goes well with](#goes-well-with)): `↑/↓`
+   move, `space` selects, `enter` installs the checked packages via the real
+   `pi install` CLI (they activate after `/reload`). Only **custom** then
    continues into the full per-setting walkthrough. Re-run any time with
    `/cc-my-pi setup`.
 
@@ -195,11 +196,12 @@ switcher), then `/reload`.
 
 ## Goes well with
 
-Not bundled (standalone npm packages, install via `packages` in
-`~/.pi/agent/settings.json`). Both `/cc-my-pi settings` and the setup wizard
-list these as optional companion rows with their install state (`✓ installed`
-/ `✗ not installed`); cycle a row to `⏎ install` to add just that one (it
-activates after `/reload`). Skipping is the default.
+Not bundled (standalone npm packages). Both `/cc-my-pi settings` and the setup
+wizard list these as optional companion rows with their install state
+(`✓ installed` / `✗ not installed`). In the panel, cycle a row to `⏎ install`;
+in the wizard, `space`-select them on the optional-extensions screen. Either way
+they install via the real `pi install` CLI and activate after `/reload`.
+Skipping is the default.
 
 - [`pi-context-view`](https://github.com/dimk90/pi-context-view)
   (`npm:pi-context-view`, MIT — Dmitry Makarov) — visualizes what fills the

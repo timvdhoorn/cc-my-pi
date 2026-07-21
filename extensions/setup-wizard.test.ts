@@ -6,7 +6,6 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   COMPANION_INSTALL_VALUE,
-  COMPANION_STEPS,
   CORE_STEPS,
   SETTING_ORDER,
   openCcToolsSetupWizard,
@@ -112,10 +111,11 @@ test("wizard: without UI notifies TUI-required and never opens an overlay", asyn
   assert.equal(notifies[0]![1], "error");
 });
 
-/** Toggle the intro choice to "custom" and enter the steps phase. */
+/** Toggle the intro choice to "custom", pass the companions screen, reach core steps. */
 function enterCustom(component: any): void {
   component.handleInput("l"); // standard -> custom
-  component.handleInput("\r"); // enter steps
+  component.handleInput("\r"); // intro -> companions
+  component.handleInput("\r"); // companions (none selected) -> core steps
 }
 
 /** Advance (Enter) until the step header names `label`; returns the component. */
@@ -166,17 +166,17 @@ test("wizard: intro Esc (raw and kitty CSI-u) resolves skip-once", async () => {
   }
 });
 
-test("wizard: Enter on intro enters steps; Esc there resolves completed", async () => {
+test("wizard: Enter on intro enters companions; Esc there resolves completed", async () => {
   const { controller } = makeController();
   const { ctx, getComponent } = makeUiCtx();
 
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
-  component.handleInput("\r"); // leave intro
-  assert.match(component.render(80)[0] as string, /step 1\//);
+  component.handleInput("\r"); // leave intro -> companions
+  assert.ok((component.render(80).join("\n")).includes("optional extensions"));
 
-  component.handleInput("\x1b[27u"); // kitty-encoded Esc mid-steps
+  component.handleInput("\x1b[27u"); // kitty-encoded Esc on companions
   assert.equal(await done, "completed");
 });
 
@@ -209,9 +209,9 @@ test("wizard: custom steps derive from SETTING_ORDER and enter through all close
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
-  enterCustom(component); // custom walks every setting
+  enterCustom(component); // custom walks every core setting
   const total = stepCount(component);
-  assert.equal(total, SETTING_ORDER.length, "custom mode covers every setting row");
+  assert.equal(total, CORE_STEPS.length, "custom mode covers every core setting row");
 
   for (let i = 0; i < total; i++) component.handleInput("\r"); // last one finishes
   assert.equal(await done, "completed");
@@ -224,7 +224,7 @@ test("wizard: back navigation does not go before the first step", async () => {
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
-  component.handleInput("\r"); // pass the intro
+  enterCustom(component); // reach the core steps
   component.handleInput("b"); // already at step 1 — no-op
   assert.match(component.render(80)[0] as string, /step 1\//);
 
@@ -245,17 +245,21 @@ test("wizard: every frame renders to a constant height", async () => {
   const component = getComponent();
 
   const introHeight = component.render(80).length;
-  component.handleInput("\r"); // into steps (step 1)
+  component.handleInput("l"); // custom
+  component.handleInput("\r"); // intro -> companions
+  const companionsHeight = component.render(80).length;
+  component.handleInput("\r"); // companions -> step 1
   const step1Height = component.render(80).length;
-  component.handleInput(" "); // cycle Tool style — shifts the preview shape
+  component.handleInput(" "); // cycle first core setting — shifts the preview shape
   const cycledHeight = component.render(80).length;
-  component.handleInput("\r"); // step 2: Group tools
-  component.handleInput(" "); // groupToolCalls off — different preview tree
-  const groupedOffHeight = component.render(80).length;
+  component.handleInput("\r"); // next step
+  component.handleInput(" "); // different preview tree
+  const nextHeight = component.render(80).length;
 
+  assert.equal(companionsHeight, introHeight, "companions screen matches intro height");
   assert.equal(step1Height, introHeight, "step 1 matches intro height");
   assert.equal(cycledHeight, introHeight, "cycling a value keeps the height");
-  assert.equal(groupedOffHeight, introHeight, "a different preview shape keeps the height");
+  assert.equal(nextHeight, introHeight, "a different preview shape keeps the height");
 });
 
 test("wizard: a custom out-of-list value is the selected default and cycles into the list", async () => {
@@ -307,52 +311,105 @@ test("wizard: intro offers standard/custom and arrow toggles the selection", asy
   assert.match(afterToggle, /● custom/, "custom becomes the selected option");
 });
 
-test("wizard: standard mode walks only the companion rows and finishes completed", async () => {
-  const { controller } = makeController();
-  const { ctx, getComponent } = makeUiCtx();
-
-  const done = openCcToolsSetupWizard(ctx, controller);
-  const component = getComponent();
-
-  component.handleInput("\r"); // standard (default) enters steps
-  assert.equal(stepCount(component), COMPANION_STEPS.length, "only companion rows are steps");
-  assert.ok(
-    (component.render(80)[0] as string).includes(COMPANION_PACKAGES[0]!.name),
-    "step 1 is the first companion row",
-  );
-
-  // Advance through every companion; none of them is a core setting label.
-  const coreLabels = new Set(CORE_STEPS.map((d) => d.label));
-  for (let i = 0; i < COMPANION_STEPS.length; i++) {
-    const header = component.render(80)[0] as string;
-    for (const label of coreLabels) {
-      assert.ok(!header.includes(`: ${label}`), `standard mode never shows core setting "${label}"`);
-    }
-    component.handleInput("\r"); // last one finishes
-  }
-  assert.equal(await done, "completed");
-});
-
-test("wizard: custom mode orders companions first, then core settings", async () => {
+test("wizard: standard mode shows the companions checkbox screen", async () => {
   const { controller } = makeController();
   const { ctx, getComponent } = makeUiCtx();
 
   openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
-  enterCustom(component);
-  assert.equal(stepCount(component), SETTING_ORDER.length, "custom covers all rows");
-  // Step 1 is the first companion; the first core setting only appears after them.
-  assert.ok(
-    (component.render(80)[0] as string).includes(COMPANION_PACKAGES[0]!.name),
-    "companions come first",
-  );
-  advanceToStep(component, COMPANION_PACKAGES.at(-1)!.name); // last companion
-  component.handleInput("\r"); // next step is the first core setting
+  component.handleInput("\r"); // standard (default) -> companions screen
+  const screen = component.render(80).join("\n");
+  assert.ok(screen.includes("optional extensions"), "companions title shown");
+  assert.ok(screen.includes("space select"), "select hint shown");
+  for (const c of COMPANION_PACKAGES) {
+    assert.ok(screen.includes(c.name), `companions screen lists ${c.name}`);
+  }
+});
+
+test("wizard: space toggles the cursor row [ ] -> [x] -> [ ]", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  component.handleInput("\r"); // -> companions
+  // Cursor starts on row 0. baseSnapshot marks pi-context-view installed, so move
+  // to a not-installed row first (row 1).
+  component.handleInput("j");
+  const second = COMPANION_PACKAGES[1]!;
+  assert.ok(component.render(80).join("\n").includes(`[ ] ${second.name}`), "starts unchecked");
+  component.handleInput(" ");
+  assert.ok(component.render(80).join("\n").includes(`[x] ${second.name}`), "space checks it");
+  component.handleInput(" ");
+  assert.ok(component.render(80).join("\n").includes(`[ ] ${second.name}`), "space unchecks it");
+});
+
+test("wizard: standard mode installs selected companions in list order then completes", async () => {
+  const { controller, applyCalls } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  const done = openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  component.handleInput("\r"); // -> companions
+  component.handleInput("j"); // move to row 1 (not installed)
+  component.handleInput(" "); // select it
+  component.handleInput("\r"); // install + finish (standard has no core steps)
+
+  const second = COMPANION_PACKAGES[1]!;
+  const companionApplies = applyCalls.filter(([id]) => id.startsWith("companion:"));
+  assert.deepEqual(companionApplies, [[`companion:${second.source}`, COMPANION_INSTALL_VALUE]]);
+  assert.equal(await done, "completed");
+});
+
+test("wizard: custom mode after companions reaches the first core step", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  component.handleInput("l"); // custom
+  component.handleInput("\r"); // -> companions
+  component.handleInput("\r"); // nothing selected -> first core step
+  assert.equal(stepCount(component), CORE_STEPS.length, "custom steps are the core settings");
   assert.ok(
     (component.render(80)[0] as string).includes(CORE_STEPS[0]!.label),
-    "core settings follow the companions",
+    "first core setting is step 1",
   );
+});
+
+test("wizard: installed companion renders ✓ installed and space does not install", async () => {
+  const { controller, applyCalls } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller); // baseSnapshot: pi-context-view installed
+  const component = getComponent();
+
+  component.handleInput("\r"); // -> companions
+  const installedName = COMPANION_PACKAGES.find((c) => c.source === "npm:pi-context-view")!.name;
+  assert.ok(
+    component.render(80).join("\n").includes(`✓ ${installedName} — installed`),
+    "installed row shows ✓ installed",
+  );
+  component.handleInput(" "); // cursor is on the installed row (row 0) — no-op
+  component.handleInput("\r"); // finish
+  assert.equal(applyCalls.filter(([id]) => id.startsWith("companion:")).length, 0, "no install");
+});
+
+test("wizard: 'b' on companions returns to the intro", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  component.handleInput("\r"); // -> companions
+  assert.ok(component.render(80).join("\n").includes("optional extensions"));
+  component.handleInput("b"); // back to intro
+  assert.ok(component.render(80).join("\n").includes("enter start"), "intro legend shown again");
 });
 
 test("wizard: standard mode still applies core wizard defaults (quiet startup)", async () => {
@@ -465,7 +522,7 @@ test("companions: apply install action calls install once; other values are igno
   assert.deepEqual(installs, ["npm:pi-subagents"], "display values never install");
 });
 
-test("companions: wizard frame with companion rows keeps the constant height", async () => {
+test("companions: the companions checkbox screen keeps the constant height", async () => {
   const { controller } = makeController();
   const { ctx, getComponent } = makeUiCtx();
 
@@ -473,12 +530,12 @@ test("companions: wizard frame with companion rows keeps the constant height", a
   const component = getComponent();
   const introHeight = component.render(80).length;
 
-  component.handleInput("\r"); // into steps
-  advanceToStep(component, COMPANION_PACKAGES[0]!.name); // first companion row
-  assert.equal(component.render(80).length, introHeight, "companion row keeps the height");
+  component.handleInput("\r"); // -> companions screen
+  assert.equal(component.render(80).length, introHeight, "companions screen keeps the height");
 
-  advanceToStep(component, COMPANION_PACKAGES.at(-1)!.name); // last companion row
-  assert.equal(component.render(80).length, introHeight, "last companion row keeps the height");
+  component.handleInput("j"); // move cursor
+  component.handleInput(" "); // toggle selection
+  assert.equal(component.render(80).length, introHeight, "toggling keeps the height");
 });
 
 /** Fake pi that records on() registrations. */

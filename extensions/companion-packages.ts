@@ -3,10 +3,12 @@
  * tiny reader/writer for Pi's global `~/.pi/agent/settings.json` packages array.
  *
  * The panel and the setup wizard render one row per companion (with ✓/✗ install
- * state) and can install a single package on demand. Installing mirrors what
- * `pi install npm:<name>` writes; Pi picks the package up on the next `/reload`.
+ * state) and can install a single package on demand. Installing shells out to
+ * the real `pi install <source>` CLI (which fetches/caches the npm package and
+ * records it in settings.json); Pi picks the package up on the next `/reload`.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -27,8 +29,19 @@ export const COMPANION_PACKAGES: CompanionPackage[] = [
 
 export interface PackagesFile {
 	isInstalled(source: string): boolean;
-	/** Append `source` to the packages array and persist. */
+	/** Install `source` via the `pi install` CLI. Throws on failure. */
 	install(source: string): void;
+}
+
+/** Shell out to `pi install <source>`; throw a descriptive error on failure. */
+function spawnPiInstall(source: string): void {
+	const result = spawnSync("pi", ["install", source], { stdio: "ignore", timeout: 120_000 });
+	if (result.error) {
+		throw new Error(`pi install ${source} failed: ${result.error.message}`);
+	}
+	if (result.status !== 0) {
+		throw new Error(`pi install ${source} exited with status ${result.status ?? "unknown"}`);
+	}
 }
 
 /** A packages entry is either a plain string or an object with a `source`. */
@@ -48,7 +61,10 @@ function defaultSettingsPath(): string {
  * Reader/writer for the Pi global settings `packages` array. `settingsPath`
  * exists so tests point at a temp file; production uses the homedir default.
  */
-export function createPiPackagesFile(settingsPath: string = defaultSettingsPath()): PackagesFile {
+export function createPiPackagesFile(
+	settingsPath: string = defaultSettingsPath(),
+	runInstall: (source: string) => void = spawnPiInstall,
+): PackagesFile {
 	return {
 		isInstalled(source: string): boolean {
 			let settings: unknown;
@@ -63,17 +79,9 @@ export function createPiPackagesFile(settingsPath: string = defaultSettingsPath(
 			return packages.some((entry) => entrySource(entry) === source);
 		},
 		install(source: string): void {
-			// Read + parse first; on failure DO NOT write anything (never clobber a
-			// file we couldn't parse) — surface the error for the caller to notify.
-			const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as {
-				packages?: unknown[];
-				[key: string]: unknown;
-			};
-			const packages = Array.isArray(settings.packages) ? settings.packages : [];
-			if (packages.some((entry) => entrySource(entry) === source)) return; // idempotent
-			packages.push(source);
-			settings.packages = packages;
-			writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+			// Delegate to the Pi CLI, which fetches/caches the package and records
+			// it in settings.json. Errors propagate for the caller to notify.
+			runInstall(source);
 		},
 	};
 }

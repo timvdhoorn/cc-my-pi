@@ -794,12 +794,16 @@ export async function openCcToolsSetupWizard(
 	await ctx.ui.custom(
 		(_tui: unknown, theme: Theme, _kb: unknown, done: (value?: undefined) => void) => {
 			let snap = controller.getSnapshot();
-			let phase: "intro" | "steps" = "intro";
+			let phase: "intro" | "companions" | "steps" = "intro";
 			let mode: "standard" | "custom" = "standard";
 			// The step list the "steps" phase walks; populated on Enter-from-intro.
-			// Standard → companions only; custom → companions first, then core.
+			// Companions get their own checkbox phase; steps holds core rows only
+			// (empty for standard mode, all core rows for custom mode).
 			let steps: typeof SETTING_ORDER = [];
 			let stepIndex = 0;
+			// Companion checkbox phase: cursor row + the set of sources to install.
+			let companionCursor = 0;
+			const companionSelected = new Set<string>();
 			let cacheWidth: number | undefined;
 			let cacheLines: string[] | undefined;
 			const kb = getKeybindings();
@@ -898,6 +902,29 @@ export async function openCcToolsSetupWizard(
 				return padToHeight(lines, WIZARD_BODY_LINES);
 			};
 
+			const renderCompanions = (width: number): string[] => {
+				const titleText = "cc-my-pi setup — optional extensions";
+				const lines: string[] = [
+					safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText),
+					safeFg(theme, "muted", truncateLine("↑/↓ move · space select · enter continue · b back", width)),
+					"",
+				];
+				COMPANION_PACKAGES.forEach((c, i) => {
+					const cursor = i === companionCursor;
+					const prefix = cursor ? "▸ " : "  ";
+					let row: string;
+					if (snap.companionsInstalled[c.source]) {
+						row = safeFg(theme, "dim", truncateLine(`${prefix}✓ ${c.name} — installed`, width));
+					} else {
+						const box = companionSelected.has(c.source) ? "[x]" : "[ ]";
+						const text = truncateLine(`${prefix}${box} ${c.name} — ${c.blurb}`, width);
+						row = companionSelected.has(c.source) || cursor ? safeFg(theme, "accent", text) : text;
+					}
+					lines.push(row);
+				});
+				return padToHeight(lines, WIZARD_BODY_LINES);
+			};
+
 			const renderStep = (width: number): string[] => {
 				const def = steps[stepIndex]!;
 				const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${steps.length}: ${def.label}`;
@@ -936,8 +963,57 @@ export async function openCcToolsSetupWizard(
 							return;
 						}
 						if (data === "\r" || data === "\n") {
-							steps = mode === "custom" ? [...COMPANION_STEPS, ...CORE_STEPS] : [...COMPANION_STEPS];
+							steps = mode === "custom" ? [...CORE_STEPS] : [];
 							if (mode === "standard") applyCoreWizardDefaults();
+							phase = "companions";
+							companionCursor = 0;
+							invalidateCache();
+							ctx.ui.requestRender?.();
+							return;
+						}
+						if (data === "x") return finish("skip-forever");
+						if (data === "s" || isCancel(data)) return finish("skip-once");
+						return;
+					}
+					if (phase === "companions") {
+						if (kb.matches(data, "tui.editor.cursorUp") || data === "k") {
+							companionCursor = Math.max(0, companionCursor - 1);
+							invalidateCache();
+							ctx.ui.requestRender?.();
+							return;
+						}
+						if (kb.matches(data, "tui.editor.cursorDown") || data === "j") {
+							companionCursor = Math.min(COMPANION_PACKAGES.length - 1, companionCursor + 1);
+							invalidateCache();
+							ctx.ui.requestRender?.();
+							return;
+						}
+						if (data === " ") {
+							const c = COMPANION_PACKAGES[companionCursor];
+							if (c && !snap.companionsInstalled[c.source]) {
+								if (companionSelected.has(c.source)) companionSelected.delete(c.source);
+								else companionSelected.add(c.source);
+								invalidateCache();
+								ctx.ui.requestRender?.();
+							}
+							return;
+						}
+						if (data === "b") {
+							phase = "intro";
+							invalidateCache();
+							ctx.ui.requestRender?.();
+							return;
+						}
+						if (data === "\r" || data === "\n") {
+							for (const c of COMPANION_PACKAGES) {
+								if (!companionSelected.has(c.source)) continue;
+								try {
+									controller.apply(`companion:${c.source}`, COMPANION_INSTALL_VALUE, ctx);
+								} catch (err) {
+									ctx.ui?.notify?.(err instanceof Error ? err.message : String(err), "error");
+								}
+							}
+							snap = controller.getSnapshot();
 							if (steps.length === 0) return finish("completed");
 							phase = "steps";
 							stepIndex = 0;
@@ -946,8 +1022,7 @@ export async function openCcToolsSetupWizard(
 							ctx.ui.requestRender?.();
 							return;
 						}
-						if (data === "x") return finish("skip-forever");
-						if (data === "s" || isCancel(data)) return finish("skip-once");
+						if (isCancel(data)) return finish("completed");
 						return;
 					}
 					if (kb.matches(data, "tui.editor.cursorLeft") || data === "h") return cycle(-1);
@@ -958,7 +1033,12 @@ export async function openCcToolsSetupWizard(
 				},
 				render(width: number) {
 					if (cacheLines && cacheWidth === width) return cacheLines;
-					const out = phase === "intro" ? renderIntro(width) : renderStep(width);
+					const out =
+						phase === "intro"
+							? renderIntro(width)
+							: phase === "companions"
+								? renderCompanions(width)
+								: renderStep(width);
 					cacheWidth = width;
 					cacheLines = out;
 					return out;

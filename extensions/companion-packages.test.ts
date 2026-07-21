@@ -58,36 +58,20 @@ test("isInstalled: false on invalid JSON (never throws)", () => {
   assert.equal(createPiPackagesFile(path).isInstalled(SRC), false);
 });
 
-test("install: appends and persists (re-read shows it)", () => {
-  const path = tmpSettings(JSON.stringify({ packages: ["npm:other"] }));
-  const file = createPiPackagesFile(path);
-  file.install(SRC);
-  assert.equal(file.isInstalled(SRC), true);
-  const settings = JSON.parse(readFileSync(path, "utf8"));
-  assert.deepEqual(settings.packages, ["npm:other", SRC]);
-});
-
-test("install: is idempotent (no duplicate on second call)", () => {
-  const path = tmpSettings(JSON.stringify({ packages: [SRC] }));
-  const file = createPiPackagesFile(path);
-  file.install(SRC);
-  const settings = JSON.parse(readFileSync(path, "utf8"));
-  assert.deepEqual(settings.packages, [SRC]);
-});
-
-test("install: creates the packages array when missing", () => {
-  const path = tmpSettings(JSON.stringify({ theme: "dark" }));
-  const file = createPiPackagesFile(path);
-  file.install(SRC);
-  const settings = JSON.parse(readFileSync(path, "utf8"));
-  assert.deepEqual(settings.packages, [SRC]);
-  assert.equal(settings.theme, "dark", "preserves unrelated keys");
-});
-
-test("install: throws on invalid JSON without modifying the file", () => {
-  const raw = "{ not json ";
+test("install: invokes the injected runInstall with the source and does not write settings", () => {
+  const raw = JSON.stringify({ packages: ["npm:other"] });
   const path = tmpSettings(raw);
-  const file = createPiPackagesFile(path);
-  assert.throws(() => file.install(SRC));
-  assert.equal(readFileSync(path, "utf8"), raw, "file left untouched after failed parse");
+  const calls: string[] = [];
+  const file = createPiPackagesFile(path, (source) => calls.push(source));
+  file.install(SRC);
+  assert.deepEqual(calls, [SRC]);
+  assert.equal(readFileSync(path, "utf8"), raw, "settings file left untouched by install");
+});
+
+test("install: propagates a throwing runInstall", () => {
+  const path = tmpSettings(JSON.stringify({ packages: [] }));
+  const file = createPiPackagesFile(path, () => {
+    throw new Error("boom");
+  });
+  assert.throws(() => file.install(SRC), /boom/);
 });
