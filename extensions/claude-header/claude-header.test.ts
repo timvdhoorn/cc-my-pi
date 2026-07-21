@@ -149,7 +149,7 @@ test("right column shows the Getting started + Loaded sections and the /loaded h
 	assert.ok(rendered.includes("Run /cc-my-pi to configure the look"), "single tip line");
 	assert.ok(rendered.includes("Loaded"), "loaded section header");
 	assert.ok(rendered.includes("/loaded for details"), "loaded hint");
-	assert.ok(rendered.includes("cc-my-pi · Claude Code look for Pi"), "left-column tagline present");
+	assert.ok(rendered.includes("cc-my-pi"), "left-column tagline present");
 	component.dispose();
 });
 

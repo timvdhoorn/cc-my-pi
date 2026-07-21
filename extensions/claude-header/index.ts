@@ -161,7 +161,7 @@ class PiStartupHeader implements Component {
 
 		// Left column order (Decision 6): tagline → mascot → model·effort → cwd.
 		const leftLines = [
-			center(bold("cc-my-pi · Claude Code look for Pi"), leftWidth),
+			center(bold("cc-my-pi"), leftWidth),
 			...piMascotFrame(this.frame, { accent: paint, muted }).map((line) => center(line, leftWidth)),
 			center(muted(`${model} · ${effort} effort`), leftWidth),
 			center(dim(cwd), leftWidth),
