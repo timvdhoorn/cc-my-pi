@@ -35,6 +35,7 @@
     "extensions/pi-agent-settings.ts",
     "extensions/image-paster.ts",
     "extensions/session-commands.ts",
+    "extensions/update-check.ts",
     "extensions/copy-command.ts",
     "extensions/esc-steer.ts",
     "extensions/double-esc-clear.ts",
@@ -60,7 +61,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/companion-packages.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/copy-command.ts extensions/queue-steer/index.ts extensions/claude-header/index.ts extensions/statusline/model-info/index.ts extensions/statusline/git-info/index.ts extensions/statusline/ui-customization/index.ts extensions/bash-execution-render.ts",
-    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/companion-packages.test.ts extensions/copy-command.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts extensions/claude-header/claude-header.test.ts extensions/claude-header/pi-mascot.test.ts extensions/claude-header/loaded-stats.test.ts extensions/pi-agent-settings.test.ts extensions/statusline/git-info/process.test.ts extensions/statusline/git-info/git-segment.test.ts extensions/statusline/git-info/refresh-coordinator.test.ts extensions/bash-execution-render.test.ts",
+    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/companion-packages.test.ts extensions/copy-command.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts extensions/claude-header/claude-header.test.ts extensions/claude-header/pi-mascot.test.ts extensions/claude-header/loaded-stats.test.ts extensions/pi-agent-settings.test.ts extensions/statusline/git-info/process.test.ts extensions/statusline/git-info/git-segment.test.ts extensions/statusline/git-info/refresh-coordinator.test.ts extensions/bash-execution-render.test.ts extensions/update-check.test.ts",
     "pack:dry-run": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
     "bench:tools": "bun scripts/benchmark-tools.ts"

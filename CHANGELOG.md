@@ -7,6 +7,12 @@
 
 ### Added
 
+- **Update check** — on session start (max once per 24h, 3s deferred, background)
+  the extension runs `git fetch` in its own clone and, when commits are behind
+  upstream, notifies: `cc-my-pi update available (N commits behind) — git -C <dir>
+  pull, then /reload`. Offline/no-upstream failures stay silent; a pull clears
+  the cached notice immediately. State in `~/.pi/cc-my-pi-update-check.json`.
+
 - **Redesigned startup header** — forked from
   [`pi-claude-code-tui`](https://github.com/Phoobobo/pi-claude-code-tui) (MIT,
   Phoobobo; header only, no editor box) and reworked to Claude Code proportions:

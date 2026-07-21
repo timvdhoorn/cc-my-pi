@@ -67,6 +67,7 @@ import { registerBundledQueueSteer } from "./queue-steer/index.js";
 import { registerClaudeHeader, type HeaderHooks } from "./claude-header/index.js";
 import { registerLoadedCommand } from "./claude-header/loaded-stats.js";
 import { createQuietStartupFile } from "./pi-agent-settings.js";
+import { maybeNotifyUpdate } from "./update-check.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -6971,6 +6972,11 @@ export default function (pi: ExtensionAPI) {
 			// Chat history rebuild can run after session_start; re-sync transparent tool bgs.
 			scheduleDeferredChromeRebind(ctx, 120);
 		}
+		// Background update check (git fetch, max once per 24h). Deferred so it
+		// never competes with startup rendering; failures stay silent.
+		setTimeout(() => {
+			void maybeNotifyUpdate((msg, type) => ctx.ui.notify(msg, type));
+		}, 3_000);
 		if (readSettings().ccMyPiSetupDone !== true) {
 			// First load: run the guided setup once. Intro "skip for now" leaves the
 			// marker unset so the next session re-opens; "don't ask again", finishing
