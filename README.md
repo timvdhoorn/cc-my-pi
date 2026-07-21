@@ -52,17 +52,17 @@ closest to stock Pi.
 
 ## Install
 
-1. Clone this repo (or use it in place inside `Pi-config/cc-my-pi`).
-2. Add its absolute path to the `packages` array in
-   `~/.pi/agent/settings.json` (not published to npm):
+1. Install from npm:
 
-   ```json
-   {
-     "packages": ["/path/to/Pi-config/cc-my-pi"]
-   }
+   ```text
+   pi install npm:cc-my-pi
    ```
-3. Run `/reload` (or restart Pi) to load it.
-4. First load auto-starts the guided setup wizard (`/cc-my-pi setup`). Its
+
+   Or for development: clone this repo and add its absolute path to the
+   `packages` array in `~/.pi/agent/settings.json`
+   (`"packages": ["/path/to/Pi-config/cc-my-pi"]`).
+2. Run `/reload` (or restart Pi) to load it.
+3. First load auto-starts the guided setup wizard (`/cc-my-pi setup`). Its
    intro asks whether you want the **standard** setup (recommended defaults,
    you only pick optional extensions) or **custom** (walk through every
    setting) — use `←/→` to choose. `s` skips for now (re-opens next session)
@@ -73,7 +73,7 @@ closest to stock Pi.
    continues into the full per-setting walkthrough. Re-run any time with
    `/cc-my-pi setup`.
 
-To uninstall, remove the path from `packages` and `/reload`.
+To uninstall, remove the `npm:cc-my-pi` (or path) entry from `packages` and `/reload`.
 
 ## Quick start
 

@@ -3,9 +3,24 @@
 > [!IMPORTANT]
 > **1.0.69 — package rename (permanent).** Canonical npm name is now [`pi-claude-code-ui`](https://www.npmjs.com/package/pi-claude-code-ui). `pi-claude-style-tools` is legacy and will not receive further releases. Install with `pi install npm:pi-claude-code-ui` or `npm i pi-claude-code-ui`.
 
-## Unreleased
+## [1.2.0] - 2026-07-21
 
 ### Added
+
+- **First npm release as `cc-my-pi`** — install with `pi install npm:cc-my-pi`;
+  listed on [pi.dev/packages](https://pi.dev/packages).
+
+- **Wizard: standard vs custom setup** — the first-run intro now asks whether
+  you want the **standard** setup (recommended defaults, only pick optional
+  extensions) or **custom** (walk through every setting), chosen with `←/→`.
+  Both paths show the optional-extensions screen; only custom continues into
+  the full per-setting walkthrough.
+
+- **Optional extensions as one checkbox screen** — companions are picked on a
+  single screen (`↑/↓` move, `space` select, `enter` continue, `b` back)
+  instead of one wizard step per package. Installs now shell out to the real
+  `pi install <source>` CLI instead of hand-writing
+  `~/.pi/agent/settings.json`.
 
 - **Update check** — on session start (max once per 24h, 3s deferred, background)
   the extension fetches the latest published version from the npm registry
