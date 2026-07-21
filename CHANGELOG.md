@@ -8,10 +8,12 @@
 ### Added
 
 - **Update check** — on session start (max once per 24h, 3s deferred, background)
-  the extension runs `git fetch` in its own clone and, when commits are behind
-  upstream, notifies: `cc-my-pi update available (N commits behind) — git -C <dir>
-  pull, then /reload`. Offline/no-upstream failures stay silent; a pull clears
-  the cached notice immediately. State in `~/.pi/cc-my-pi-update-check.json`.
+  the extension fetches the upstream `package.json` over HTTPS (no git needed)
+  and compares versions. Newer upstream → notify: `cc-my-pi X.Y.Z available
+  (installed A.B.C) — update your copy in <dir>, then /reload`. Offline/HTTP
+  failures stay silent; updating the local copy clears the notice immediately.
+  State in `~/.pi/cc-my-pi-update-check.json`. Requires a version bump per
+  release for the notice to fire.
 
 - **Redesigned startup header** — forked from
   [`pi-claude-code-tui`](https://github.com/Phoobobo/pi-claude-code-tui) (MIT,
