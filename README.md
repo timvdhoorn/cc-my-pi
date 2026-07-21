@@ -73,11 +73,14 @@ checklist for the embeds in the HTML comment above):
    ```
 3. Run `/reload` (or restart Pi) to load it.
 4. First load auto-starts the guided setup wizard (`/cc-my-pi setup`). Its
-   intro offers three choices: `enter` to start, `s` to skip for now (it
-   re-opens next session), or `x` to not ask again. Re-run it any time with
-   `/cc-my-pi setup`. The wizard's final rows are the optional companion
-   packages (see [Goes well with](#goes-well-with)) — each shows its install
-   state and can be installed on the spot; skipping them is fine.
+   intro asks whether you want the **standard** setup (recommended defaults,
+   you only pick optional extensions) or **custom** (walk through every
+   setting) — use `←/→` to choose. `s` skips for now (re-opens next session)
+   and `x` never asks again. Both paths first step through the optional
+   companion packages (see [Goes well with](#goes-well-with)) — each shows its
+   install state and can be installed on the spot; only **custom** then
+   continues into the full per-setting walkthrough. Re-run any time with
+   `/cc-my-pi setup`.
 
 To uninstall, remove the path from `packages` and `/reload`.
 

@@ -6,6 +6,8 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   COMPANION_INSTALL_VALUE,
+  COMPANION_STEPS,
+  CORE_STEPS,
   SETTING_ORDER,
   openCcToolsSetupWizard,
   wizardStepValues,
@@ -110,6 +112,12 @@ test("wizard: without UI notifies TUI-required and never opens an overlay", asyn
   assert.equal(notifies[0]![1], "error");
 });
 
+/** Toggle the intro choice to "custom" and enter the steps phase. */
+function enterCustom(component: any): void {
+  component.handleInput("l"); // standard -> custom
+  component.handleInput("\r"); // enter steps
+}
+
 /** Advance (Enter) until the step header names `label`; returns the component. */
 function advanceToStep(component: any, label: string): void {
   for (let i = 0; i < 40; i++) {
@@ -179,8 +187,9 @@ test("wizard: cycling a value applies it live and shows the changed preview", as
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
-  component.handleInput("\r"); // pass the intro
-  component.handleInput(" "); // space cycles the focused (first) setting forward
+  enterCustom(component); // custom walkthrough includes the core settings
+  advanceToStep(component, "Tool style");
+  component.handleInput(" "); // space cycles the focused setting forward
   assert.deepEqual(applyCalls.at(-1), ["toolBackground", "transparent"]);
 
   const rendered = component.render(80).join("\n");
@@ -193,16 +202,16 @@ test("wizard: cycling a value applies it live and shows the changed preview", as
   assert.equal(await done, "completed");
 });
 
-test("wizard: steps derive from SETTING_ORDER and enter through all closes it", async () => {
+test("wizard: custom steps derive from SETTING_ORDER and enter through all closes it", async () => {
   const { controller } = makeController();
   const { ctx, getComponent } = makeUiCtx();
 
   const done = openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
 
-  component.handleInput("\r"); // pass the intro
+  enterCustom(component); // custom walks every setting
   const total = stepCount(component);
-  assert.ok(total >= 18, `expected all settings as steps, got ${total}`);
+  assert.equal(total, SETTING_ORDER.length, "custom mode covers every setting row");
 
   for (let i = 0; i < total; i++) component.handleInput("\r"); // last one finishes
   assert.equal(await done, "completed");
@@ -264,7 +273,7 @@ test("wizard: a custom out-of-list value is the selected default and cycles into
 
   openCcToolsSetupWizard(ctx, controller);
   const component = getComponent();
-  component.handleInput("\r"); // pass the intro
+  enterCustom(component); // Spinner verb is a core setting
   advanceToStep(component, "Spinner verb");
 
   const atStep = component.render(80).join("\n");
@@ -277,6 +286,113 @@ test("wizard: a custom out-of-list value is the selected default and cycles into
     ["spinnerVerbColor", "borderAccent"],
     "cycling lands on the first curated value",
   );
+});
+
+test("wizard: intro offers standard/custom and arrow toggles the selection", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  const intro = component.render(80).join("\n");
+  assert.ok(intro.includes("standard"), "standard option shown");
+  assert.ok(intro.includes("custom"), "custom option shown");
+  assert.ok(intro.includes("choose"), "choose hint shown");
+  // standard is selected by default: its line carries the ● marker.
+  assert.match(intro, /● standard/);
+
+  component.handleInput("l"); // toggle to custom
+  const afterToggle = component.render(80).join("\n");
+  assert.match(afterToggle, /● custom/, "custom becomes the selected option");
+});
+
+test("wizard: standard mode walks only the companion rows and finishes completed", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  const done = openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  component.handleInput("\r"); // standard (default) enters steps
+  assert.equal(stepCount(component), COMPANION_STEPS.length, "only companion rows are steps");
+  assert.ok(
+    (component.render(80)[0] as string).includes(COMPANION_PACKAGES[0]!.name),
+    "step 1 is the first companion row",
+  );
+
+  // Advance through every companion; none of them is a core setting label.
+  const coreLabels = new Set(CORE_STEPS.map((d) => d.label));
+  for (let i = 0; i < COMPANION_STEPS.length; i++) {
+    const header = component.render(80)[0] as string;
+    for (const label of coreLabels) {
+      assert.ok(!header.includes(`: ${label}`), `standard mode never shows core setting "${label}"`);
+    }
+    component.handleInput("\r"); // last one finishes
+  }
+  assert.equal(await done, "completed");
+});
+
+test("wizard: custom mode orders companions first, then core settings", async () => {
+  const { controller } = makeController();
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  const component = getComponent();
+
+  enterCustom(component);
+  assert.equal(stepCount(component), SETTING_ORDER.length, "custom covers all rows");
+  // Step 1 is the first companion; the first core setting only appears after them.
+  assert.ok(
+    (component.render(80)[0] as string).includes(COMPANION_PACKAGES[0]!.name),
+    "companions come first",
+  );
+  advanceToStep(component, COMPANION_PACKAGES.at(-1)!.name); // last companion
+  component.handleInput("\r"); // next step is the first core setting
+  assert.ok(
+    (component.render(80)[0] as string).includes(CORE_STEPS[0]!.label),
+    "core settings follow the companions",
+  );
+});
+
+test("wizard: standard mode still applies core wizard defaults (quiet startup)", async () => {
+  const snap: CcToolsUiSnapshot = {
+    ...baseSnapshot,
+    claudeHeaderEnabled: true,
+    quietStartup: false,
+  };
+  const applyCalls: Array<[string, string]> = [];
+  const controller: CcToolsSettingsController = {
+    getSnapshot: () => ({ ...snap }),
+    apply(id, value) {
+      applyCalls.push([String(id), value]);
+      const key = id as keyof CcToolsUiSnapshot;
+      (snap as any)[key] = typeof snap[key] === "boolean" ? value === "on" : value;
+    },
+  };
+  const { ctx, getComponent } = makeUiCtx();
+
+  openCcToolsSetupWizard(ctx, controller);
+  getComponent().handleInput("\r"); // standard mode enters steps
+  assert.ok(
+    applyCalls.some(([id, value]) => id === "quietStartup" && value === "on"),
+    "quiet startup default lands even though core steps are skipped",
+  );
+});
+
+test("wizard: s / x / Esc on the intro still resolve skip-once / skip-forever / skip-once", async () => {
+  const cases: Array<[string, string]> = [
+    ["s", "skip-once"],
+    ["x", "skip-forever"],
+    [ESC, "skip-once"],
+  ];
+  for (const [key, expected] of cases) {
+    const { controller } = makeController();
+    const { ctx, getComponent } = makeUiCtx();
+    const done = openCcToolsSetupWizard(ctx, controller);
+    getComponent().handleInput(key);
+    assert.equal(await done, expected, `intro key ${JSON.stringify(key)}`);
+  }
 });
 
 test("companions: one row per companion, ids companion:<source>, after regular rows", () => {

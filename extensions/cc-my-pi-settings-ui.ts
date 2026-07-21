@@ -331,6 +331,11 @@ export const SETTING_ORDER: Array<{
 	})),
 ];
 
+/** Core settings (everything except companion-package rows). */
+export const CORE_STEPS = SETTING_ORDER.filter((d) => !String(d.id).startsWith("companion:"));
+/** Optional companion-package rows only. */
+export const COMPANION_STEPS = SETTING_ORDER.filter((d) => String(d.id).startsWith("companion:"));
+
 function boolLabel(on: boolean): string {
 	return on ? "on" : "off";
 }
@@ -790,8 +795,11 @@ export async function openCcToolsSetupWizard(
 		(_tui: unknown, theme: Theme, _kb: unknown, done: (value?: undefined) => void) => {
 			let snap = controller.getSnapshot();
 			let phase: "intro" | "steps" = "intro";
+			let mode: "standard" | "custom" = "standard";
+			// The step list the "steps" phase walks; populated on Enter-from-intro.
+			// Standard → companions only; custom → companions first, then core.
+			let steps: typeof SETTING_ORDER = [];
 			let stepIndex = 0;
-			const total = SETTING_ORDER.length;
 			let cacheWidth: number | undefined;
 			let cacheLines: string[] | undefined;
 			const kb = getKeybindings();
@@ -805,7 +813,7 @@ export async function openCcToolsSetupWizard(
 			// once per step so the user can still cycle away from it afterward.
 			const defaulted = new Set<number>();
 			const applyStepDefault = () => {
-				const def = SETTING_ORDER[stepIndex];
+				const def = steps[stepIndex];
 				if (!def || defaulted.has(stepIndex)) return;
 				defaulted.add(stepIndex);
 				const want = def.wizardDefault?.(snap);
@@ -830,7 +838,7 @@ export async function openCcToolsSetupWizard(
 			};
 
 			const cycle = (direction: 1 | -1) => {
-				const def = SETTING_ORDER[stepIndex];
+				const def = steps[stepIndex];
 				if (!def) return;
 				const values = wizardStepValues(def, snap);
 				if (!values.length) return;
@@ -845,7 +853,7 @@ export async function openCcToolsSetupWizard(
 			};
 
 			const advance = () => {
-				if (stepIndex >= total - 1) return finish("completed");
+				if (stepIndex >= steps.length - 1) return finish("completed");
 				stepIndex += 1;
 				applyStepDefault();
 				invalidateCache();
@@ -860,26 +868,39 @@ export async function openCcToolsSetupWizard(
 				ctx.ui.requestRender?.();
 			};
 
+			// Standard mode skips the core walkthrough, but its first-visit wizard
+			// defaults (e.g. quiet startup ON with the header) must still land.
+			const applyCoreWizardDefaults = () => {
+				for (const def of CORE_STEPS) {
+					const want = def.wizardDefault?.(snap);
+					if (want && want !== def.current(snap)) {
+						controller.apply(def.id, want, ctx);
+						snap = controller.getSnapshot();
+					}
+				}
+				invalidateCache();
+			};
+
 			const renderIntro = (width: number): string[] => {
 				const titleText = "cc-my-pi setup";
-				const body = [
-					"Guided walkthrough of every cc-my-pi setting — ~19 steps.",
-					"Changes apply live and are saved to ~/.pi/settings.json.",
-					"Open /cc-my-pi anytime to change everything later; re-run with /cc-my-pi setup.",
-				];
+				const opt = (on: boolean, text: string) =>
+					on ? safeFg(theme, "accent", `● ${text}`) : safeFg(theme, "dim", `  ${text}`);
 				const lines = [
 					safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText),
 					"",
-					...body.map((l) => safeFg(theme, "muted", truncateLine(l, width))),
+					safeFg(theme, "muted", truncateLine("Changes apply live and are saved to ~/.pi/settings.json.", width)),
 					"",
-					safeFg(theme, "muted", truncateLine("enter start · s skip for now · x don't ask again", width)),
+					opt(mode === "standard", truncateLine("standard — recommended defaults, only pick optional extensions", width)),
+					opt(mode === "custom", truncateLine("custom — walk through every setting", width)),
+					"",
+					safeFg(theme, "muted", truncateLine("←/→ choose · enter start · s skip for now · x don't ask again", width)),
 				];
 				return padToHeight(lines, WIZARD_BODY_LINES);
 			};
 
 			const renderStep = (width: number): string[] => {
-				const def = SETTING_ORDER[stepIndex]!;
-				const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${total}: ${def.label}`;
+				const def = steps[stepIndex]!;
+				const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${steps.length}: ${def.label}`;
 				const title = safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText);
 				const hints = safeFg(theme, "muted", "←/→ or space change · enter next · b back · esc finish");
 				const cur = def.current(snap);
@@ -902,8 +923,24 @@ export async function openCcToolsSetupWizard(
 				},
 				handleInput(data: string) {
 					if (phase === "intro") {
+						if (
+							kb.matches(data, "tui.editor.cursorLeft") ||
+							kb.matches(data, "tui.editor.cursorRight") ||
+							data === "h" ||
+							data === "l" ||
+							data === " "
+						) {
+							mode = mode === "standard" ? "custom" : "standard";
+							invalidateCache();
+							ctx.ui.requestRender?.();
+							return;
+						}
 						if (data === "\r" || data === "\n") {
+							steps = mode === "custom" ? [...COMPANION_STEPS, ...CORE_STEPS] : [...COMPANION_STEPS];
+							if (mode === "standard") applyCoreWizardDefaults();
+							if (steps.length === 0) return finish("completed");
 							phase = "steps";
+							stepIndex = 0;
 							applyStepDefault();
 							invalidateCache();
 							ctx.ui.requestRender?.();
