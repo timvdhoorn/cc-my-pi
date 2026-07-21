@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	formatUpdateNotice,
+	installedVersion,
+	installedViaNpm,
 	isCheckDue,
 	isNewerVersion,
 	readUpdateState,
@@ -39,12 +41,35 @@ test("isNewerVersion: non-semver input never triggers", () => {
 	assert.equal(isNewerVersion("", ""), false);
 });
 
-test("formatUpdateNotice includes versions, dir, /reload", () => {
-	const msg = formatUpdateNotice("1.2.0", "1.1.0", "/pkg");
-	assert.match(msg, /1\.2\.0 available/);
-	assert.match(msg, /installed 1\.1\.0/);
-	assert.match(msg, /\/pkg/);
-	assert.match(msg, /\/reload/);
+test("formatUpdateNotice: npm vs local instruction", () => {
+	const npmMsg = formatUpdateNotice("1.2.0", "1.1.0", true);
+	assert.match(npmMsg, /1\.2\.0 available/);
+	assert.match(npmMsg, /installed 1\.1\.0/);
+	assert.match(npmMsg, /pi install npm:cc-my-pi/);
+	assert.match(npmMsg, /\/reload/);
+	assert.match(formatUpdateNotice("1.2.0", "1.1.0", false), /update your local copy/);
+});
+
+test("installedVersion: reads own package.json via module location", () => {
+	// Runs from the real repo checkout: extensions/.. holds package.json.
+	const v = installedVersion(join(process.cwd(), "extensions"));
+	assert.match(v ?? "", /^\d+\.\d+\.\d+/);
+});
+
+test("installedVersion: unknown dir → undefined", () => {
+	assert.equal(installedVersion("/nonexistent/nowhere"), undefined);
+});
+
+test("installedViaNpm: detects npm:cc-my-pi entry, not lookalikes", () => {
+	const dir = mkdtempSync(join(tmpdir(), "ccmp-upd-"));
+	const path = join(dir, "settings.json");
+	writeFileSync(path, JSON.stringify({ packages: ["npm:cc-my-pi"] }));
+	assert.equal(installedViaNpm(path), true);
+	writeFileSync(path, JSON.stringify({ packages: ["npm:cc-my-pi@1.2.0"] }));
+	assert.equal(installedViaNpm(path), true);
+	writeFileSync(path, JSON.stringify({ packages: ["/local/cc-my-pi", "npm:cc-my-pi-extras"] }));
+	assert.equal(installedViaNpm(path), false);
+	assert.equal(installedViaNpm(join(dir, "missing.json")), false);
 });
 
 test("readUpdateState: missing or corrupt file → empty state", () => {
