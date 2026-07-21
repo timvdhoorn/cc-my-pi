@@ -57,8 +57,6 @@ Screenshots to capture (drop PNGs in `assets/screenshots/`, then swap this
 checklist for the embeds in the HTML comment above):
 
 - [ ] `setup-wizard.png` — `/cc-my-pi setup` mid-step, showing the `changed: …` example
-- [ ] `spinner.png` — spinner with verb + status suffix
-- [ ] `queue-steer.png` — queue widget with a steer/follow-up queued
 
 ## Install
 
