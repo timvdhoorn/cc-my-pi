@@ -46,17 +46,9 @@ closest to stock Pi.
 
 ![Queue steer](assets/screenshots/queue-steer.png)
 
-<!--
-Drop PNGs into assets/screenshots/ with the names below, then delete the
-matching checklist line — the embed uncomments itself by replacing this block:
+**Setup wizard** — first-run intro: standard vs custom
 
 ![Setup wizard](assets/screenshots/setup-wizard.png)
--->
-
-Screenshots to capture (drop PNGs in `assets/screenshots/`, then swap this
-checklist for the embeds in the HTML comment above):
-
-- [ ] `setup-wizard.png` — `/cc-my-pi setup` mid-step, showing the `changed: …` example
 
 ## Install
 
