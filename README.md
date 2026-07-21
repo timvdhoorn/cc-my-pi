@@ -10,6 +10,10 @@ closest to stock Pi.
 
 ## Screenshots
 
+**Startup header** — animated π mascot, model/effort/cwd, Loaded counts panel
+
+![Startup header](assets/screenshots/startup-header.png)
+
 **Tool rendering** — grouped tool rows (⏺ dots, collapsed `∴ Thinking`, spinner with esc hint)
 
 ![Tool rendering](assets/screenshots/tool-rendering.png)
@@ -34,13 +38,19 @@ closest to stock Pi.
 
 ![Statusline](assets/screenshots/statusline.png)
 
+**Spinner** — Claude-style verb + esc hint
+
+![Spinner](assets/screenshots/spinner.png)
+
+**Queue steer** — visible steering/follow-up queue with inline editing
+
+![Queue steer](assets/screenshots/queue-steer.png)
+
 <!--
 Drop PNGs into assets/screenshots/ with the names below, then delete the
 matching checklist line — the embed uncomments itself by replacing this block:
 
 ![Setup wizard](assets/screenshots/setup-wizard.png)
-![Spinner](assets/screenshots/spinner.png)
-![Queue steer](assets/screenshots/queue-steer.png)
 -->
 
 Screenshots to capture (drop PNGs in `assets/screenshots/`, then swap this
