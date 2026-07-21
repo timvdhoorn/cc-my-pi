@@ -1,5 +1,9 @@
 # cc-my-pi
 
+If you're like me — you love Claude Code, but running other models or
+providers through it never feels reliable — this brings the Claude Code
+experience to [Pi](https://pi.dev), which works with any model.
+
 > Personal Pi UI bundle — Claude Code-inspired tool rendering, spinner, themes, and esc/queue steering. Fork of [pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`), heavily adapted. See [Credits & provenance](#credits--provenance).
 
 Every module below is **optional and individually toggleable** — turn any of
