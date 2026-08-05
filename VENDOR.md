@@ -10,10 +10,10 @@ in vendored files is a bug.
 
 - **Upstream**: https://github.com/tmustier/pi-queue-steer
 - **License**: MIT — Thomas Mustier
-- **Pinned**: v0.1.0 / commit `c68ec21` (vendored 2026-07-20)
+- **Pinned**: commit `d395e9b` (vendored 2026-08-05; was c68ec21 / v0.1.0)
 - **Files**: index.ts (adapted), queue-state.ts (verbatim),
   editor-render.ts (verbatim), queue-state.test.ts + editor-render.test.ts
-  (ported: sibling import paths, register-fn call)
+  + command-rows.test.ts (ported: sibling import paths, register-fn call)
 - **Local delta** (keep exactly these, nothing more):
   1. default export → `registerBundledQueueSteer(pi, isEnabled)` with live
      gate (widget render + handleInput interception check `isEnabled()`)
@@ -26,6 +26,12 @@ in vendored files is a bug.
      lanes
   5. sibling import specifiers `./editor-render.ts` / `./queue-state.ts`
   6. attribution header comment
+- **Upstream since previous pin** (kept):
+  - command rows for `/compact [instructions]` and `/reload` (FIFO, idle-only)
+  - mid-run Enter on `/reload` queues instead of Pi wait-warning; `/compact`
+    keeps built-in Enter behaviour
+  - restore rows queued behind `/reload` after runtime swap
+  - idle Option+Enter command submissions execute instead of LLM text
 - **Replaced package entry**: `git:github.com/tmustier/pi-queue-steer`
   removed from `~/.pi/agent/settings.json` on 2026-07-20.
 
