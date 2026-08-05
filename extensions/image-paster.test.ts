@@ -32,5 +32,5 @@ test("enabled image paster registers exactly once with custom editor support", (
   assert.equal(factoryCalls, 1);
   assert.equal(extensionCalls, 1);
   assert.equal(receivedConfig!.customEditor?.enabled, true);
-  assert.equal(receivedConfig!.customEditor?.showImagePreview, true);
+  assert.equal(receivedConfig!.customEditor?.showImagePreview, false);
 });

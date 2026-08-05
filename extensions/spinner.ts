@@ -544,6 +544,18 @@ function formatCount(value: number): string {
 	return new Intl.NumberFormat("en-US").format(value);
 }
 
+/** Claude-style compact token counts: 18, 1.4k, 12k */
+function formatTokenCount(value: number): string {
+	const n = Math.max(0, Math.round(value));
+	if (n < 1000) return String(n);
+	const k = n / 1000;
+	if (k < 10) {
+		const oneDecimal = Math.round(k * 10) / 10;
+		return `${oneDecimal % 1 === 0 ? oneDecimal.toFixed(0) : oneDecimal.toFixed(1)}k`;
+	}
+	return `${Math.round(k)}k`;
+}
+
 function estimateResponseLength(message: any): number {
 	if (!Array.isArray(message?.content)) return 0;
 	return message.content.reduce((sum: number, block: any) =>
@@ -570,8 +582,8 @@ function statusText(text: string): string {
 // Extension
 // ---------------------------------------------------------------------------
 
-/** Threshold before showing elapsed time in status parentheses */
-const SHOW_TIMER_AFTER_MS = 30_000;
+/** Threshold before showing elapsed time in status parentheses (Claude shows early). */
+const SHOW_TIMER_AFTER_MS = 1_000;
 
 /** How long to preserve "thought for Ns" across turns */
 const THOUGHT_DISPLAY_MS = 3_500;
@@ -617,26 +629,21 @@ export default function (pi: ExtensionAPI) {
 	function buildWorkingMessage(): string {
 		const elapsed = Date.now() - (agentStartTime || turnStartTime);
 		const tokenCount = Math.max(0, Math.round(responseLength / 4));
+		// Claude Code shape while tools/stream run:
+		//   Crafting… (esc to interrupt · ↓ 1.4k tokens · 1m 2s)
+		// No "thinking" chip — thinking chrome is suppressed elsewhere too.
 		const statusParts: string[] = ["esc to interrupt"];
 
-		if (thinkingStatus === "thinking") {
-			statusParts.push(`thinking${getEffortSuffix()}`);
-		} else if (typeof thinkingStatus === "number") {
-			statusParts.push(`thought for ${Math.max(1, Math.round(thinkingStatus / 1000))}s`);
-		}
-
 		if (tokenCount > 0) {
-			statusParts.push(`↓ ${formatCount(tokenCount)} tokens`);
+			statusParts.push(`↓ ${formatTokenCount(tokenCount)} tokens`);
 		}
 
-		if (elapsed > SHOW_TIMER_AFTER_MS || thinkingStatus !== null || tokenCount > 0) {
+		if (elapsed >= SHOW_TIMER_AFTER_MS || tokenCount > 0) {
 			statusParts.push(formatDuration(elapsed));
 		}
 
 		let message = `${CLAUDE_ORANGE}${currentVerb}…${RESET}`;
-		if (statusParts.length > 0) {
-			message += statusText(` (${statusParts.join(" · ")})`);
-		}
+		message += statusText(` (${statusParts.join(" · ")})`);
 		return message;
 	}
 

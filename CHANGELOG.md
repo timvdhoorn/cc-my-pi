@@ -7,6 +7,10 @@
 
 ### Changed
 
+- **Lighter Called-line color** — mid-gray (~#a0a0a0 / theme muted), not near-black FG_DIM.
+- **Faster image paste** — editor hover preview off; collapsible submitted previews; terminal image width 40 cells.
+- **Shift+Enter outermost wrap** — re-assert after paster/queue-steer so newline wins over follow-up.
+- **Busy spinner = Claude shape** — `Crafting… (esc to interrupt · ↓ 1.4k tokens · 1m 2s)`; no thinking chip.
 - **Claude-style tool groups** — muted `Called Bash 3 times` / `Called Microsoft 365 3 times` (MCP by server), no command trees.
 - **Hide thinking chrome** — no more `∴ Thinking` / duration rows.
 - **Tool groups = identity only** — e.g. `Bash ×3` with no command tree or previews.

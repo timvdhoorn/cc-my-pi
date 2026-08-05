@@ -1168,11 +1168,14 @@ class ToolGroupComponent extends Container {
 		};
 
 		// Claude Code style: muted prose "Called Bash 3 times" — no bullets/tree/args.
+		// Mid-gray (not FG_DIM #505050) — readable on cc-my-pi-dark.
+		const CALL_GROUP_FG =
+			safeFgAnsi(getGlobalPiTheme() as Theme, "muted") ?? "\x1b[38;2;160;160;160m";
 		const phrase = formatCalledToolsPhrase(this.tools);
 		const statusBits = formatCollapsedStatusBits(counts);
-		// Settled success groups match CC (dim, no status dot). Pending/error keep a light.
+		// Settled success groups match CC (no status dot). Pending/error keep a light.
 		const showLight = overall !== "success" || status.pending > 0;
-		const mutedPhrase = `${FG_DIM}${phrase}${TRANSPARENT_RESET}`;
+		const mutedPhrase = `${CALL_GROUP_FG}${phrase}${TRANSPARENT_RESET}`;
 		const body = statusBits
 			? `${mutedPhrase}${TRANSPARENT_RESET} · ${statusBits}`
 			: mutedPhrase;
@@ -2252,37 +2255,88 @@ function formatSubagentNotification(lines: string[], width: number): string[] {
 }
 
 const SHIFT_ENTER_NEWLINE_FEATURE = "cc-shift-enter-newline";
+/** Only on the outermost factory we own — not copied when others wrap us. */
+const SHIFT_ENTER_OUTER = Symbol.for("cc-my-pi:shift-enter-outer");
 
 /** True when input should insert a newline, not submit/follow-up. */
 function isShiftEnterNewlineData(data: string, keybindings?: { matches?: (d: string, id: string) => boolean }): boolean {
+	if (!data) return false;
 	if (typeof keybindings?.matches === "function" && keybindings.matches(data, "tui.input.newLine")) {
 		return true;
 	}
 	// Ghostty historical: shift+enter=text:\x1b\r — without Kitty this is alt+enter/followUp.
 	if (data === "\x1b\r") return true;
-	// CSI u / modifyOtherKeys Shift+Enter
+	// ctrl+j is also bound to newLine in pi-tui defaults
+	if (data === "\n" && data.length === 1) {
+		// Only treat bare LF as newline when keybindings say so (already handled above).
+		// Do not force — bare LF can be submit without Kitty.
+	}
+	// CSI u / modifyOtherKeys Shift+Enter (Ghostty keybind text:\x1b[13;2u)
 	if (data === "\x1b[13;2u" || data === "\x1b[27;2;13~" || data === "\x1b[13;2~") return true;
 	if (typeof data === "string" && /^\x1b\[13;\d*u$/.test(data) && data.includes(";2")) return true;
-	// Kitty with associated text sometimes appends the character after the CSI u payload.
+	// Kitty CSI-u with event type / associated text suffixes
+	if (typeof data === "string" && /^\x1b\[13;2(?::\d+)?u/.test(data)) return true;
 	if (typeof data === "string" && data.startsWith("\x1b[13;2u")) return true;
+	// modifyOtherKeys form with extra junk
+	if (typeof data === "string" && data.includes("\x1b[27;2;13~")) return true;
+	return false;
+}
+
+function insertEditorNewline(editor: any, tui?: any): boolean {
+	if (typeof editor?.addNewLine === "function") {
+		editor.addNewLine();
+		try {
+			editor.invalidate?.();
+			tui?.requestRender?.();
+		} catch {
+			/* noop */
+		}
+		return true;
+	}
+	// Last-resort: split getText at cursor if API exists
+	try {
+		const getText = editor?.getText?.bind(editor);
+		const setText = editor?.setText?.bind(editor);
+		const getCursor = editor?.getCursor?.bind(editor) ?? editor?.getCursorPosition?.bind(editor);
+		const setCursor = editor?.setCursor?.bind(editor) ?? editor?.setCursorPosition?.bind(editor);
+		if (typeof getText === "function" && typeof setText === "function") {
+			const text = String(getText() ?? "");
+			const cursor =
+				typeof getCursor === "function"
+					? getCursor()
+					: typeof editor?.state?.cursorCol === "number"
+						? {
+								line: editor.state.cursorLine ?? 0,
+								col: editor.state.cursorCol ?? text.length,
+							}
+						: null;
+			if (cursor && typeof cursor.line === "number") {
+				// Prefer native addNewLine path only; state shape varies too much.
+				return false;
+			}
+			setText(`${text}\n`);
+			return true;
+		}
+	} catch {
+		/* noop */
+	}
 	return false;
 }
 
 /**
- * Instance-level editor wrap (NOT CustomEditor.prototype).
- *
- * jiti loads extensions with moduleCache:false, so a prototype patch on the
- * CustomEditor copy resolved inside the extension does not affect the live
- * editor class pi already constructed. Wrap the active factory instead
- * (same pattern as prompt-glyph / esc-steer), outermost via deferred install.
+ * Instance-level editor wrap. Must stay OUTERMOST: other extensions (queue-steer,
+ * pi-paster) wrap/replace after us. Skip only when *we* are already the outer factory
+ * (OUTER symbol). Do NOT skip merely because our feature appears mid-chain.
  */
 function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 	const install = (ctx: any): void => {
 		if (ctx.mode !== "tui") return;
 		const previous = ctx.ui.getEditorComponent();
+		// Already outermost — nothing to do.
+		if (previous && (previous as any)[SHIFT_ENTER_OUTER]) return;
+
 		const features: ReadonlySet<string> =
 			(previous as any)?.[EDITOR_FEATURES_SYMBOL] ?? new Set();
-		if (features.has(SHIFT_ENTER_NEWLINE_FEATURE)) return;
 
 		const factory = ((tui: any, theme: any, keybindings: any) => {
 			const editor =
@@ -2291,26 +2345,25 @@ function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 
 			editor.handleInput = (data: string): void => {
 				if (isShiftEnterNewlineData(data, keybindings)) {
-					const ed = editor as { addNewLine?: () => void };
-					if (typeof ed.addNewLine === "function") {
-						ed.addNewLine();
-						return;
-					}
+					if (insertEditorNewline(editor, tui)) return;
 				}
 				prevHandle(data);
 			};
 
 			return editor;
 		}) as any;
+		factory[SHIFT_ENTER_OUTER] = true;
 		factory[EDITOR_FEATURES_SYMBOL] = new Set([...features, SHIFT_ENTER_NEWLINE_FEATURE]);
 		ctx.ui.setEditorComponent(factory);
 	};
 
 	const installLate = (ctx: any): void => {
+		// Aggressive re-assert outermost after paster/queue-steer compose.
+		for (const ms of [0, 0, 50, 100, 250, 500, 1000, 2000]) {
+			if (ms === 0) queueMicrotask(() => install(ctx));
+			else setTimeout(() => install(ctx), ms);
+		}
 		install(ctx);
-		// Stay outermost after queue-steer / esc-steer / pi-paster compose.
-		setTimeout(() => install(ctx), 0);
-		setTimeout(() => install(ctx), 50);
 	};
 
 	pi.on("session_start", (_event, ctx) => installLate(ctx));
