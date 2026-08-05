@@ -805,10 +805,9 @@ function formatCollapsedStatusBits(counts: Record<ToolStatus, number>): string {
 	return parts.join(`${TRANSPARENT_RESET} · `);
 }
 
-// Collapsed middle-ground thresholds (Claude is one-line "called X N times";
-// we keep a short preview / mix list, full tree only when expanded).
+// Collapsed: tool identity only. Full tree only when expanded (ctrl+o).
 const COLLAPSE_SAME_TOOL_MIN = 2;
-const COLLAPSE_MIXED_SUMMARY_MIN = 3;
+const COLLAPSE_MIXED_SUMMARY_MIN = 2;
 
 function escapeRegex(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1113,7 +1112,6 @@ class ToolGroupComponent extends Container {
 
 		const groupedName = getGroupedToolName(this.tools);
 		const label = getToolGroupLabel(this.tools);
-		const names = groupedName ? "" : formatToolNameList(this.tools);
 		const overall: ToolStatus = status.error > 0 ? "error" : status.pending > 0 ? "pending" : "success";
 		// Group header breathes only when every pending member is Agent-family;
 		// mixed groups keep the ordinary on/off light.
@@ -1121,101 +1119,21 @@ class ToolGroupComponent extends Container {
 		const headerBreathe = pendingTools.length > 0 && pendingTools.every((tool) => isAgentFamilyToolName(getToolName(tool)));
 		const light = groupStatusLight(overall, { agentBreathe: headerBreathe });
 		const total = this.tools.length;
-		const hint = toolOutputDetailHint(undefined as any, this.expanded, true);
 		const counts: Record<ToolStatus, number> = {
 			pending: status.pending,
 			success: status.success,
 			error: status.error,
 		};
 
-		// ---- Collapsed middle-ground (default) ----
-		// Claude Code collapses to "called X N times". We keep one dense line with
-		// a count + short preview (same tool) or a mix list (different tools),
-		// and only draw the full ├/└ tree when expanded (ctrl+o).
-		if (!this.expanded) {
-			if (groupedName && total >= COLLAPSE_SAME_TOOL_MIN) {
-				const statusBits = formatCollapsedStatusBits(counts);
-				const preview = getCollapsedGroupPreview(this.tools);
-				const parts = [
-					`${light}`,
-					`${label} ×${total}`,
-				];
-				if (statusBits) parts.push(statusBits);
-				if (preview) parts.push(`${FG_DIM}${preview}${TRANSPARENT_RESET}`);
-				const line = ` ${parts.join(` ${TRANSPARENT_RESET}· `)}${hint}`;
-				const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
-				if (canCache) {
-					this.dirty = false;
-					this.cachedWidth = safeWidth;
-					this.cachedEpoch = _toolBranchVisualEpoch;
-					this.cachedMode = toolBackgroundMode;
-					this.cachedExpanded = this.expanded;
-					this.cachedBlinkPhase = true;
-					this.cachedStatusKey = status.key;
-					this.cachedToolCount = total;
-					this.cachedLines = lines;
-				} else {
-					this.clearRenderCache();
-				}
-				return lines;
-			}
-
-			if (!groupedName && total >= COLLAPSE_MIXED_SUMMARY_MIN) {
-				const statusBits = formatCollapsedStatusBits(counts);
-				const mix = formatToolCountList(this.tools);
-				const parts = [`${light}`, `${total} tools`, mix];
-				if (statusBits) parts.splice(2, 0, statusBits);
-				const line = ` ${parts.join(` ${TRANSPARENT_RESET}· `)}${hint}`;
-				const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
-				if (canCache) {
-					this.dirty = false;
-					this.cachedWidth = safeWidth;
-					this.cachedEpoch = _toolBranchVisualEpoch;
-					this.cachedMode = toolBackgroundMode;
-					this.cachedExpanded = this.expanded;
-					this.cachedBlinkPhase = true;
-					this.cachedStatusKey = status.key;
-					this.cachedToolCount = total;
-					this.cachedLines = lines;
-				} else {
-					this.clearRenderCache();
-				}
-				return lines;
-			}
-			// 1 tool, or 2 mixed tools: keep the compact per-row tree below.
-		}
-
-		// ---- Expanded (or small collapsed groups): header + branched rows ----
-		const summaryLabel = `${label}:`;
-		const countParts: string[] = [];
-		if (status.pending) countParts.push(statusText("pending", status.pending));
-		if (status.success) countParts.push(statusText("success", status.success));
-		if (status.error) countParts.push(statusText("error", status.error));
-		const countsText = countParts.join(`${TRANSPARENT_RESET} • `);
-		const summary = ` ${light} ${summaryLabel} ${countsText}${names ? ` ${TRANSPARENT_RESET}• ${names}` : ""}${hint}`;
-		const lines = [" ".repeat(safeWidth), clampLineWidth(summary, safeWidth)];
-		const childWidth = Math.max(1, safeWidth - 6);
-
-		for (let index = 0; index < total; index++) {
-			const tool = this.tools[index];
-			const rawLines = this.expanded
-				? getExpandedToolGroupLines(tool, childWidth, groupedName ? label : undefined)
-				: [appendCompactSummary(
-						getCompactToolLine(tool, childWidth, groupedName ? label : undefined),
-						getCompactToolSummary(tool, childWidth, groupedName ? label : undefined),
-					)];
-			const branched = formatBranchedToolLines(
-				rawLines,
-				index,
-				total,
-				safeWidth,
-				getToolStatusForGroup(tool),
-				{ agentBreathe: isAgentFamilyToolName(getToolName(tool)) },
-			);
-			for (let i = 0; i < branched.length; i++) {
-				lines.push(clampLineWidth(branched[i], safeWidth));
-			}
-		}
+		// Always identity-only: which tool(s) + count. No command args, no ├/└ tree.
+		const statusBits = formatCollapsedStatusBits(counts);
+		const identity = groupedName
+			? (total > 1 ? `${label} ×${total}` : label)
+			: formatToolCountList(this.tools);
+		const parts = [`${light}`, identity];
+		if (statusBits) parts.push(statusBits);
+		const line = ` ${parts.join(` ${TRANSPARENT_RESET}· `)}`;
+		const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
 
 		// Final clamp already applied per-line above; avoid a second full pass.
 		if (canCache) {
@@ -1296,7 +1214,8 @@ function maybeGroupToolComponent(parent: any, component: any): void {
 	}
 	if (isGroupableTool(previous)) {
 		const group = new ToolGroupComponent();
-		group.setExpanded(Boolean((previous as any).expanded));
+		// Always start collapsed — identity-only row; never inherit a noisy expanded tree.
+		group.setExpanded(false);
 		group.addTool(previous);
 		group.addTool(component);
 		(group as any)[COMPONENT_PARENT] = parent;
@@ -1655,18 +1574,9 @@ class HiddenThinkingSummary {
 		this.cachedLines = undefined;
 	}
 
-	render(width: number): string[] {
-		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-		const safeWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
-		if (safeWidth <= 0) {
-			this.cachedWidth = width;
-			this.cachedLines = [""];
-			return this.cachedLines;
-		}
-		const line = padRenderedLineToWidth(this.summaryText, safeWidth);
-		this.cachedWidth = width;
-		this.cachedLines = [line];
-		return this.cachedLines;
+	render(_width: number): string[] {
+		// Thinking chrome is fully suppressed — no "Thinking…" / duration rows.
+		return [];
 	}
 }
 
@@ -2112,17 +2022,17 @@ class DottedParagraph {
 	}
 }
 
-function replaceHiddenThinkingPlaceholders(container: { children?: any[] }, message: any): void {
+function replaceHiddenThinkingPlaceholders(container: { children?: any[] }, _message?: any): void {
 	if (!container?.children) return;
-	const summary = hiddenThinkingSummaryForMessage(message);
-	for (let i = 0; i < container.children.length; i++) {
+	// Drop every thinking placeholder — user wants no thinking chrome at all.
+	for (let i = container.children.length - 1; i >= 0; i--) {
 		const child = container.children[i];
-		if (child instanceof HiddenThinkingSummary) {
-			child.setSummary(summary);
-			continue;
-		}
-		if (isHiddenThinkingPlaceholderText(child)) {
-			container.children[i] = new HiddenThinkingSummary(summary);
+		if (
+			child instanceof HiddenThinkingSummary
+			|| child instanceof ThinkingParagraph
+			|| isHiddenThinkingPlaceholderText(child)
+		) {
+			container.children.splice(i, 1);
 		}
 	}
 }
@@ -2199,54 +2109,12 @@ class ThinkingParagraph {
 	}
 
 	render(width: number): string[] {
-		if (
-			this.cachedLines
-			&& this.cachedWidth === width
-			&& this.cachedExpanded === THINKING_BLOCKS_EXPANDED
-			&& this.chromeEpoch === _toolBranchVisualEpoch
-		) {
-			return this.cachedLines;
-		}
-		const safeWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
-		if (safeWidth <= 0) {
-			this.cachedWidth = width;
-			this.cachedLines = [""];
-			this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
-			this.chromeEpoch = _toolBranchVisualEpoch;
-			return this.cachedLines;
-		}
-		if (!THINKING_BLOCKS_EXPANDED) {
-			const label = ` ${WORKED_LINE_FG}\x1b[3m∴ Thinking\x1b[23m${RESET} ${keyHint("app.tools.expand", "to expand")}`;
-			this.cachedWidth = width;
-			this.cachedLines = [clampLineWidth(label, safeWidth)];
-			this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
-			this.chromeEpoch = _toolBranchVisualEpoch;
-			return this.cachedLines;
-		}
-		const md = this.thinkingMarkdown();
-		// " ∴ " = 1 margin + symbol + space = 3 visible chars
-		const PREFIX_W = 3;
-		const prefix = `${WORKED_LINE_FG}∴${RESET}`;
-		if (safeWidth <= PREFIX_W) {
-			this.cachedWidth = width;
-			this.cachedLines = [clampLineWidth(` ${prefix} `, safeWidth)];
-			this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
-			return this.cachedLines;
-		}
-		const lines = sanitizeRenderedTextBlockLines(md.render(safeWidth - PREFIX_W), safeWidth - PREFIX_W);
-		let symbolPlaced = false;
-		const rendered = lines.map((line: string) => {
-			if (!symbolPlaced && stripAnsi(line).trim()) {
-				symbolPlaced = true;
-				return ` ${prefix} ${line}`;
-			}
-			return `   ${line}`;
-		}).map((line) => clampLineWidth(line, safeWidth));
+		// Fully hide thinking blocks (collapsed and expanded). Tool rows carry the work.
 		this.cachedWidth = width;
-		this.cachedLines = rendered;
+		this.cachedLines = [];
 		this.cachedExpanded = THINKING_BLOCKS_EXPANDED;
 		this.chromeEpoch = _toolBranchVisualEpoch;
-		return rendered;
+		return this.cachedLines;
 	}
 }
 
@@ -3145,7 +3013,7 @@ function clearPreservedBashPreviews(): void {
 
 function shouldPreserveBashPreview(ctx: any): boolean {
 	// Grouping/dense chrome already collapses completed bash to one line — keeping
-	a multi-line tail would flash large then shrink when the next tool groups in.
+	// a multi-line tail would flash large then shrink when the next tool groups in.
 	if (toolGroupingEnabled()) return false;
 	return typeof ctx?.toolCallId === "string" && PRESERVED_BASH_PREVIEWS.has(ctx.toolCallId);
 }

@@ -85,7 +85,7 @@ export const SETTING_ORDER: Array<{
 		current: (s) => (s.groupToolCalls ? "on" : "off"),
 		describe: (s) =>
 			s.groupToolCalls
-				? "Collapsed: Bash ×3 · preview (ctrl+o expands full tree)"
+				? "Group row is tool identity only (e.g. Bash ×3) — no command dump"
 				: "Each tool is a full separate row",
 	},
 	{
@@ -477,31 +477,13 @@ function paintStandaloneTool(
 }
 
 function paintGrouped(lines: string[], snap: CcToolsUiSnapshot, p: Paint): void {
-	const b = p.branch;
-	// Default collapsed middle-ground: one dense line (not a full ├/└ tree).
-	lines.push(
-		`${p.ok("●")} ${p.title("Bash ×3")} ${p.muted("·")} ${p.accent("npm test")} ${p.dim("(ctrl+o expand)")}`,
-	);
-	lines.push("");
-	lines.push(p.dim("mixed tools collapse to:"));
-	lines.push(
-		`${p.ok("●")} ${p.title("4 tools")} ${p.muted("·")} ${p.accent("Bash ×2 · Read · Grep")}`,
-	);
-
-	// Expanded tree mock (what ctrl+o reveals).
-	lines.push("");
-	lines.push(p.dim("expanded:"));
-	lines.push(`${p.ok("●")} ${p.title("Bash:")} ${p.ok("3")} done`);
-	lines.push(`${b("├")} ${p.ok("●")} ${p.accent("npm test")}`);
-	lines.push(`${b("├")} ${p.ok("●")} ${p.accent("npm run lint")}`);
-	lines.push(`${b("└")} ${p.ok("●")} ${p.accent("npm run typecheck")}`);
-
+	// Identity only — no commands, no tree.
+	lines.push(`${p.ok("●")} ${p.title("Bash ×3")}`);
+	lines.push(`${p.ok("●")} ${p.title("Bash ×2 · Skill · Grep")}`);
 	if (snap.liveToolPreview) {
 		lines.push("");
 		lines.push(p.dim("while running:"));
-		lines.push(
-			`${p.warn("●")} ${p.title("Bash ×2")} ${p.muted("·")} ${p.warn("1 running")} ${p.muted("·")} ${p.accent("npm test")}`,
-		);
+		lines.push(`${p.warn("●")} ${p.title("Bash ×2")} ${p.muted("·")} ${p.warn("1 running")}`);
 	}
 }
 
