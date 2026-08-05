@@ -85,7 +85,7 @@ export const SETTING_ORDER: Array<{
 		current: (s) => (s.groupToolCalls ? "on" : "off"),
 		describe: (s) =>
 			s.groupToolCalls
-				? "Group row is tool identity only (e.g. Bash ×3) — no command dump"
+				? 'Claude-style prose: "Called Bash 3 times" — no command dump'
 				: "Each tool is a full separate row",
 	},
 	{
@@ -477,13 +477,13 @@ function paintStandaloneTool(
 }
 
 function paintGrouped(lines: string[], snap: CcToolsUiSnapshot, p: Paint): void {
-	// Identity only — no commands, no tree.
-	lines.push(`${p.ok("●")} ${p.title("Bash ×3")}`);
-	lines.push(`${p.ok("●")} ${p.title("Bash ×2 · Skill · Grep")}`);
+	// Claude Code prose — no commands, no tree.
+	lines.push(p.muted("Called Bash 3 times"));
+	lines.push(p.muted("Called Bash 2 times, Skill, Grep"));
 	if (snap.liveToolPreview) {
 		lines.push("");
 		lines.push(p.dim("while running:"));
-		lines.push(`${p.warn("●")} ${p.title("Bash ×2")} ${p.muted("·")} ${p.warn("1 running")}`);
+		lines.push(`${p.warn("●")} ${p.muted("Called Bash 2 times")} ${p.muted("·")} ${p.warn("1 running")}`);
 	}
 }
 

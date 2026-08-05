@@ -681,14 +681,39 @@ function getToolName(tool: any): string {
 	return typeof tool?.toolName === "string" && tool.toolName ? tool.toolName : "tool";
 }
 
+/**
+ * Group key for collapse. MCP tools collapse by server (Claude: "Called Microsoft 365 3 times"),
+ * not by each server action name.
+ */
+function getToolGroupKey(tool: any): string {
+	const name = getToolName(tool);
+	// mcp__server__action / mcp_server_action / server__action
+	const mcpDouble = name.match(/^mcp__([^_]+)__/i) || name.match(/^mcp:([^:]+):/i);
+	if (mcpDouble) return `mcp:${mcpDouble[1].toLowerCase()}`;
+	const mcpSingle = name.match(/^mcp[_-]([^_-]+)/i);
+	if (mcpSingle) return `mcp:${mcpSingle[1].toLowerCase()}`;
+	// bare server__tool (common MCP adapter shape)
+	const serverTool = name.match(/^([A-Za-z][\w.-]+)__/);
+	if (serverTool && !CORE_TOOL_OVERRIDES.has(name)) return `svc:${serverTool[1].toLowerCase()}`;
+	return name;
+}
+
+function displayNameForGroupKey(key: string): string {
+	if (key.startsWith("mcp:") || key.startsWith("svc:")) {
+		return humanizeToolName(key.slice(4));
+	}
+	return humanizeToolName(key);
+}
+
 function getGroupedToolName(tools: any[]): string | undefined {
-	const first = getToolName(tools[0]);
-	return tools.every((tool) => getToolName(tool) === first) ? first : undefined;
+	// Prefer exact tool-name match for core tools; MCP uses group key.
+	const firstKey = getToolGroupKey(tools[0]);
+	return tools.every((tool) => getToolGroupKey(tool) === firstKey) ? firstKey : undefined;
 }
 
 function getToolGroupLabel(tools: any[]): string {
-	const sameName = getGroupedToolName(tools);
-	return sameName ? humanizeToolName(sameName) : "Multiple Tools";
+	const same = getGroupedToolName(tools);
+	return same ? displayNameForGroupKey(same) : "Multiple Tools";
 }
 
 function getToolGroupOverallStatus(tools: any[]): ToolStatus {
@@ -775,6 +800,28 @@ function formatToolCountList(tools: any[], maxKinds = 5): string {
 	});
 	if (entries.length > maxKinds) shown.push("…");
 	return shown.join(" · ");
+}
+
+/** Claude Code prose: "Called Bash 3 times" / "Called Bash 2 times, Read, Grep". */
+function formatCalledToolsPhrase(tools: any[], maxKinds = 5): string {
+	const counts = new Map<string, number>();
+	for (const tool of tools) {
+		const key = getToolGroupKey(tool);
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+	}
+	const entries = [...counts.entries()];
+	if (entries.length === 0) return "Called tools";
+	if (entries.length === 1) {
+		const [key, count] = entries[0];
+		const label = displayNameForGroupKey(key);
+		return count === 1 ? `Called ${label}` : `Called ${label} ${count} times`;
+	}
+	const shown = entries.slice(0, maxKinds).map(([key, count]) => {
+		const label = displayNameForGroupKey(key);
+		return count > 1 ? `${label} ${count} times` : label;
+	});
+	if (entries.length > maxKinds) shown.push("…");
+	return `Called ${shown.join(", ")}`;
 }
 
 /** Latest useful arg/preview snippet for a collapsed same-tool group. */
@@ -1110,29 +1157,26 @@ class ToolGroupComponent extends Container {
 		// almost entirely settled history, which is the expensive warm path.
 		const canCache = status.pending === 0;
 
-		const groupedName = getGroupedToolName(this.tools);
-		const label = getToolGroupLabel(this.tools);
 		const overall: ToolStatus = status.error > 0 ? "error" : status.pending > 0 ? "pending" : "success";
-		// Group header breathes only when every pending member is Agent-family;
-		// mixed groups keep the ordinary on/off light.
 		const pendingTools = this.tools.filter((tool) => getToolStatusForGroup(tool) === "pending");
 		const headerBreathe = pendingTools.length > 0 && pendingTools.every((tool) => isAgentFamilyToolName(getToolName(tool)));
 		const light = groupStatusLight(overall, { agentBreathe: headerBreathe });
-		const total = this.tools.length;
 		const counts: Record<ToolStatus, number> = {
 			pending: status.pending,
 			success: status.success,
 			error: status.error,
 		};
 
-		// Always identity-only: which tool(s) + count. No command args, no ├/└ tree.
+		// Claude Code style: muted prose "Called Bash 3 times" — no bullets/tree/args.
+		const phrase = formatCalledToolsPhrase(this.tools);
 		const statusBits = formatCollapsedStatusBits(counts);
-		const identity = groupedName
-			? (total > 1 ? `${label} ×${total}` : label)
-			: formatToolCountList(this.tools);
-		const parts = [`${light}`, identity];
-		if (statusBits) parts.push(statusBits);
-		const line = ` ${parts.join(` ${TRANSPARENT_RESET}· `)}`;
+		// Settled success groups match CC (dim, no status dot). Pending/error keep a light.
+		const showLight = overall !== "success" || status.pending > 0;
+		const mutedPhrase = `${FG_DIM}${phrase}${TRANSPARENT_RESET}`;
+		const body = statusBits
+			? `${mutedPhrase}${TRANSPARENT_RESET} · ${statusBits}`
+			: mutedPhrase;
+		const line = showLight ? ` ${light} ${body}` : ` ${body}`;
 		const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
 
 		// Final clamp already applied per-line above; avoid a second full pass.

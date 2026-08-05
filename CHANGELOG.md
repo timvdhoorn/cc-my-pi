@@ -7,6 +7,7 @@
 
 ### Changed
 
+- **Claude-style tool groups** — muted `Called Bash 3 times` / `Called Microsoft 365 3 times` (MCP by server), no command trees.
 - **Hide thinking chrome** — no more `∴ Thinking` / duration rows.
 - **Tool groups = identity only** — e.g. `Bash ×3` with no command tree or previews.
 - **Stable dense tools** — with grouping on, live multi-line bash tails stay off until expand, so tools no longer flash full then collapse into a group line.
