@@ -3,6 +3,20 @@
 > [!IMPORTANT]
 > **1.0.69 — package rename (permanent).** Canonical npm name is now [`pi-claude-code-ui`](https://www.npmjs.com/package/pi-claude-code-ui). `pi-claude-style-tools` is legacy and will not receive further releases. Install with `pi install npm:pi-claude-code-ui` or `npm i pi-claude-code-ui`.
 
+## [Unreleased]
+
+### Changed
+
+- **Faster Pi startup** — optional companions (statusline/Effect git-info, queue-steer,
+  header, esc/image paste, …) load in parallel during the factory instead of on the
+  static import graph; settings UI and `diff` load on first use.
+- **Statusline footer placement** — footer sits above `widgetBelow` (e.g. pi-subagents
+  fleet rows) so main/worker lines render under mem/caveman.
+- **Skill rows** — Claude-style `Skill(name)` for skill invocations and SKILL.md reads
+  (was bold `[skill] name`).
+- **Shift+Enter** — prefer newline over follow-up/submit when CustomEditor would steal
+  Shift+Enter for `app.message.followUp` (steer queue).
+
 ## [1.2.0] - 2026-07-21
 
 ### Added

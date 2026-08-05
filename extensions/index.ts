@@ -16,6 +16,7 @@ import {
 	BashExecutionComponent,
 	CustomEditor,
 	CustomMessageComponent,
+	SkillInvocationMessageComponent,
 	ToolExecutionComponent,
 	UserMessageComponent,
 	keyHint,
@@ -43,31 +44,18 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import {
-	COMPANION_INSTALL_VALUE,
-	openCcToolsSettingsPanel,
-	openCcToolsSetupWizard,
-	type BranchPreset,
-	type CcToolsSettingsController,
-	type CcToolsUiSnapshot,
-	type OutputMode,
-	type SetupWizardOutcome,
-	type ToolStyle,
+// Types only — settings UI module (~1k LOC + panel stack) loads on first /cc-my-pi open.
+import type {
+	BranchPreset,
+	CcToolsSettingsController,
+	CcToolsUiSnapshot,
+	OutputMode,
+	SetupWizardOutcome,
+	ToolStyle,
 } from "./cc-my-pi-settings-ui.js";
+import type { HeaderHooks } from "./claude-header/index.js";
 import { COMPANION_PACKAGES, createPiPackagesFile } from "./companion-packages.js";
-import { registerBundledImagePaster } from "./image-paster.js";
-import { registerBundledEscSteer } from "./esc-steer.js";
-import { registerSessionCommands } from "./session-commands.js";
-import { registerCopyCommand } from "./copy-command.js";
-import registerStatuslineGitInfo from "./statusline/git-info/index.js";
-import registerStatuslineModelInfo from "./statusline/model-info/index.js";
-import registerStatuslineUi from "./statusline/ui-customization/index.js";
-import { registerBundledDoubleEscClear } from "./double-esc-clear.js";
-import { registerBundledQueueSteer } from "./queue-steer/index.js";
-import { registerClaudeHeader, type HeaderHooks } from "./claude-header/index.js";
-import { registerLoadedCommand } from "./claude-header/loaded-stats.js";
 import { createQuietStartupFile } from "./pi-agent-settings.js";
-import { maybeNotifyUpdate } from "./update-check.js";
 import {
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
@@ -78,8 +66,105 @@ import {
 } from "./user-message-render.js";
 import { buildBashContentLines, renderClaudeBashLines } from "./bash-execution-render.js";
 
-import * as Diff from "diff";
 import type { BundledLanguage, BundledTheme } from "shiki";
+
+// ---------------------------------------------------------------------------
+// Lazy / deferred loaders
+// Heavy companion modules (Effect statusline, queue-steer, settings UI, diff)
+// used to sit on the static import graph and block Pi startup (~1.5s+).
+// Optional bundles start loading in the background when the factory runs so
+// later packages can import in parallel; session_start awaits readiness.
+// ---------------------------------------------------------------------------
+
+type DiffApi = {
+	structuredPatch: (...args: any[]) => { hunks: Array<{ oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }> };
+	diffWords: (oldText: string, newText: string) => Array<{ value: string; added?: boolean; removed?: boolean }>;
+};
+let diffModule: DiffApi | undefined;
+let diffModulePromise: Promise<DiffApi> | undefined;
+function preloadDiff(): Promise<DiffApi> {
+	return (diffModulePromise ??= import("diff").then((m) => {
+		diffModule = m as unknown as DiffApi;
+		return diffModule;
+	}));
+}
+function diffApi(): DiffApi {
+	if (!diffModule) {
+		throw new Error("cc-my-pi: diff module not preloaded yet");
+	}
+	return diffModule;
+}
+
+type SettingsUiModule = typeof import("./cc-my-pi-settings-ui.js");
+let settingsUiModule: Promise<SettingsUiModule> | undefined;
+function loadSettingsUi(): Promise<SettingsUiModule> {
+	return (settingsUiModule ??= import("./cc-my-pi-settings-ui.js"));
+}
+
+/**
+ * Register optional UI/input bundles in parallel.
+ * Order matches the previous eager path (statusline before claude-header).
+ */
+function startOptionalBundles(pi: ExtensionAPI): Promise<void> {
+	return (async () => {
+		const [
+			escSteer,
+			doubleEsc,
+			queueSteer,
+			imagePaster,
+			sessionCommands,
+			copyCommand,
+			modelInfo,
+			gitInfo,
+			uiCustomization,
+			claudeHeader,
+			loadedStats,
+		] = await Promise.all([
+			import("./esc-steer.js"),
+			import("./double-esc-clear.js"),
+			import("./queue-steer/index.js"),
+			import("./image-paster.js"),
+			import("./session-commands.js"),
+			import("./copy-command.js"),
+			import("./statusline/model-info/index.js"),
+			import("./statusline/git-info/index.js"),
+			import("./statusline/ui-customization/index.js"),
+			import("./claude-header/index.js"),
+			import("./claude-header/loaded-stats.js"),
+		]);
+
+		escSteer.registerBundledEscSteer(pi, escSteerEnabled);
+		doubleEsc.registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
+		queueSteer.registerBundledQueueSteer(pi, queueSteerEnabled);
+		imagePaster.registerBundledImagePaster(pi, imagePasterEnabled());
+		sessionCommands.registerSessionCommands(pi, readSettings().sessionCommandsEnabled !== false);
+		copyCommand.registerCopyCommand(pi, readSettings().copyCommandEnabled !== false, {
+			copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
+			setCopyAlwaysFull: (v: boolean) => writeSettingsKey("copyAlwaysFull", v),
+		});
+
+		const claudeHeaderEnabled = readSettings().claudeHeaderEnabled !== false;
+		let statuslineHeaderHooks: HeaderHooks["onTui"];
+		if (readSettings().statuslineEnabled !== false) {
+			const registerModelInfo = (modelInfo as any).default as (api: ExtensionAPI) => void;
+			const registerGitInfo = (gitInfo as any).default as (api: ExtensionAPI) => void;
+			const registerUiCustomization = (uiCustomization as any).default as (
+				api: ExtensionAPI,
+				opts: { skipHeader: boolean },
+			) => { onTui: HeaderHooks["onTui"] };
+			registerModelInfo(pi);
+			registerGitInfo(pi);
+			// skipHeader hands the header over to the vendored claude-header module;
+			// the statusline still runs its header side effects via the onTui hook.
+			statuslineHeaderHooks = registerUiCustomization(pi, { skipHeader: claudeHeaderEnabled }).onTui;
+		}
+		// Register AFTER the statusline block so the header's setTimeout(0) apply
+		// wins the setHeader race deterministically.
+		claudeHeader.registerClaudeHeader(pi, claudeHeaderEnabled, { onTui: statuslineHeaderHooks });
+		// /loaded is ALWAYS registered, independent of the header setting (Decision 5).
+		loadedStats.registerLoadedCommand(pi);
+	})();
+}
 
 const RESET = "\x1b[0m";
 const TRANSPARENT_BG = "\x1b[49m";
@@ -104,6 +189,8 @@ const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-cust
 const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-user-message-render");
 const PROMPT_EDITOR_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-prompt-editor-render");
 const UI_NOTIFY_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-ui-notifications-v2");
+const NEWLINE_PRIORITY_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-newline-priority");
+const SKILL_INVOCATION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-skill-invocation");
 const WRAP_MARK = "\uE000";
 const KITTY_IMAGE_PREFIX = "\x1b_G";
 const ITERM2_IMAGE_PREFIX = "\x1b]1337;File=";
@@ -2129,6 +2216,85 @@ function formatSubagentNotification(lines: string[], width: number): string[] {
 	return frameToolLikeLines(indented, width);
 }
 
+/**
+ * CustomEditor checks app actions (incl. followUp) before Editor newLine handling.
+ * On some terminals Shift+Enter shares a sequence with alt+enter / followUp, so the
+ * message is queued/sent instead of inserting a newline. Prefer newLine first.
+ */
+function patchCustomEditorNewlinePriority(): void {
+	const proto = CustomEditor.prototype as any;
+	if (proto[NEWLINE_PRIORITY_PATCH_FLAG]) return;
+	const original = proto.handleInput;
+	if (typeof original !== "function") return;
+	const editorBase = Object.getPrototypeOf(CustomEditor.prototype) as {
+		handleInput?: (data: string) => void;
+	};
+	proto.handleInput = function patchedNewlinePriorityHandleInput(this: any, data: string) {
+		const kb = this?.keybindings;
+		const isConfiguredNewline = typeof kb?.matches === "function" && kb.matches(data, "tui.input.newLine");
+		// Hard-match common Shift+Enter encodings when keybinding table misses them.
+		const isShiftEnterSeq =
+			data === "\x1b[13;2~" ||
+			data === "\x1b[27;2;13~" ||
+			data === "\x1b[13;2u" ||
+			(typeof data === "string" && /^\x1b\[13;\d*u$/.test(data) && data.includes(";2"));
+		if ((isConfiguredNewline || isShiftEnterSeq) && typeof editorBase.handleInput === "function") {
+			return editorBase.handleInput.call(this, data);
+		}
+		return original.call(this, data);
+	};
+	proto[NEWLINE_PRIORITY_PATCH_FLAG] = true;
+}
+
+/** Claude-style skill invocation card: Skill(name) instead of bold [skill] + expand hint. */
+function patchSkillInvocationRender(): void {
+	const proto = SkillInvocationMessageComponent.prototype as any;
+	if (proto[SKILL_INVOCATION_PATCH_FLAG]) return;
+	const originalUpdate = proto.updateDisplay;
+	if (typeof originalUpdate !== "function") return;
+	proto.updateDisplay = function patchedSkillInvocationUpdateDisplay(this: any) {
+		try {
+			this.clear?.();
+			const block = this.skillBlock;
+			const name = String(block?.name ?? "skill");
+			const mdTheme = this.markdownTheme;
+			if (this.expanded) {
+				const label =
+					themeFgSafe(this, "customMessageLabel", "\x1b[1mSkill\x1b[22m") +
+					themeFgSafe(this, "customMessageText", `(${name})`);
+				this.addChild?.(new Text(label, 0, 0));
+				const header = `\n`;
+				const content = String(block?.content ?? "");
+				this.addChild?.(
+					new Markdown(header + content, 0, 0, mdTheme, {
+						color: (text: string) => themeFgSafe(this, "customMessageText", text),
+					}),
+				);
+				return;
+			}
+			const line =
+				themeFgSafe(this, "customMessageLabel", "\x1b[1mSkill\x1b[22m") +
+				themeFgSafe(this, "customMessageText", `(${name})`);
+			this.addChild?.(new Text(line, 0, 0));
+		} catch {
+			return originalUpdate.call(this);
+		}
+	};
+	proto[SKILL_INVOCATION_PATCH_FLAG] = true;
+}
+
+function themeFgSafe(_component: unknown, key: string, text: string): string {
+	try {
+		// SkillInvocationMessageComponent uses the interactive theme singleton via closure;
+		// fall back through getGlobalPiTheme when available.
+		const t = getGlobalPiTheme() as Theme | undefined;
+		if (t && typeof t.fg === "function") return t.fg(key as any, text);
+	} catch {
+		/* ignore */
+	}
+	return text;
+}
+
 function patchCustomMessageRender(): void {
 	const proto = CustomMessageComponent.prototype as any;
 	if (proto[CUSTOM_MESSAGE_PATCH_FLAG]) return;
@@ -2697,6 +2863,15 @@ function toolHeader(tool: string, summary: string, theme: Theme, prefix = "", tr
 	const body = usefulSummary
 		? `${label} ${WRAP_MARK}${theme.fg("accent", usefulSummary)}`
 		: label;
+	return trailing ? `${prefix}${body}${trailing}` : `${prefix}${body}`;
+}
+
+/** Claude Code style: Skill(name) — no space between label and parens. */
+function skillHeader(skillName: string, theme: Theme, prefix = "", trailing = ""): string {
+	applyThemePaletteIfNeeded(theme);
+	const body =
+		theme.fg("toolTitle", theme.bold("Skill")) +
+		theme.fg("accent", `(${skillName})`);
 	return trailing ? `${prefix}${body}${trailing}` : `${prefix}${body}`;
 }
 
@@ -4519,7 +4694,7 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, mapItem: (ite
 }
 
 function parseDiff(oldContent: string, newContent: string, ctxLines = 3): ParsedDiff {
-	const patch = Diff.structuredPatch("", "", oldContent, newContent, "", "", { context: ctxLines });
+	const patch = diffApi().structuredPatch("", "", oldContent, newContent, "", "", { context: ctxLines });
 	const lines: DiffLine[] = [];
 	let added = 0;
 	let removed = 0;
@@ -4567,7 +4742,7 @@ function wordDiffAnalysis(
 	newText: string,
 ): { similarity: number; oldRanges: Array<[number, number]>; newRanges: Array<[number, number]> } {
 	if (!oldText && !newText) return { similarity: 1, oldRanges: [], newRanges: [] };
-	const parts = Diff.diffWords(oldText, newText);
+	const parts = diffApi().diffWords(oldText, newText);
 	const oldRanges: Array<[number, number]> = [];
 	const newRanges: Array<[number, number]> = [];
 	let oldPos = 0;
@@ -4623,7 +4798,7 @@ function injectBg(ansiLine: string, ranges: Array<[number, number]>, baseBg: str
 }
 
 function plainWordDiff(oldText: string, newText: string): { old: string; new: string } {
-	const parts = Diff.diffWords(oldText, newText);
+	const parts = diffApi().diffWords(oldText, newText);
 	let oldOut = "";
 	let newOut = "";
 	for (const part of parts) {
@@ -5369,6 +5544,17 @@ function renderGenericToolCall(name: string, args: any, theme: Theme, ctx: any):
 	if (isAgentFamilyToolName(name)) ctx.state._agentBreathe = true;
 	const sp = (path: string) => shortPath(ctx.cwd ?? process.cwd(), path);
 	const summary = stableCallSummary(ctx, "_callSummary", () => summarizeGenericToolCall(name, args, theme, sp));
+	// Claude-style Skill(name) — no space between label and parens.
+	if (name === "Skill" || (typeof summary === "string" && summary.startsWith("\0skill:"))) {
+		const skillName =
+			typeof summary === "string" && summary.startsWith("\0skill:")
+				? summary.slice("\0skill:".length)
+				: getStringArg(args, "name") || "skill";
+		return makeText(
+			ctx.lastComponent,
+			skillHeader(skillName, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+		);
+	}
 	return makeText(
 		ctx.lastComponent,
 		toolHeader(genericToolLabel(name), summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
@@ -6053,8 +6239,11 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			return getStringArg(args, "paper") || theme.fg("muted", "paper");
 		case "alpha_read_code":
 			return getStringArg(args, "githubUrl", "github_url") || theme.fg("muted", "repository");
-		case "Skill":
-			return getStringArg(args, "name") || theme.fg("muted", "run skill");
+		case "Skill": {
+			// Marker consumed by generic renderer → skillHeader(name).
+			const name = getStringArg(args, "name");
+			return name ? `\0skill:${name}` : theme.fg("muted", "run skill");
+		}
 		case "EnterPlanMode":
 			return theme.fg("muted", "enable read-only planning");
 		case "ExitPlanMode":
@@ -6291,30 +6480,13 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 // Extension
 // ===========================================================================
 
-export default function (pi: ExtensionAPI) {
-	registerBundledEscSteer(pi, escSteerEnabled);
-	registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
-	registerBundledQueueSteer(pi, queueSteerEnabled);
-	registerBundledImagePaster(pi, imagePasterEnabled());
-	registerSessionCommands(pi, readSettings().sessionCommandsEnabled !== false);
-	registerCopyCommand(pi, readSettings().copyCommandEnabled !== false, {
-		copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
-		setCopyAlwaysFull: (v) => writeSettingsKey("copyAlwaysFull", v),
-	});
-	const claudeHeaderEnabled = readSettings().claudeHeaderEnabled !== false;
-	let statuslineHeaderHooks: HeaderHooks["onTui"];
-	if (readSettings().statuslineEnabled !== false) {
-		registerStatuslineModelInfo(pi);
-		registerStatuslineGitInfo(pi);
-		// skipHeader hands the header over to the vendored claude-header module;
-		// the statusline still runs its header side effects via the onTui hook.
-		statuslineHeaderHooks = registerStatuslineUi(pi, { skipHeader: claudeHeaderEnabled }).onTui;
-	}
-	// Register AFTER the statusline block so the header's setTimeout(0) apply
-	// wins the setHeader race deterministically.
-	registerClaudeHeader(pi, claudeHeaderEnabled, { onTui: statuslineHeaderHooks });
-	// /loaded is ALWAYS registered, independent of the header setting (Decision 5).
-	registerLoadedCommand(pi);
+export default async function (pi: ExtensionAPI) {
+	// Start heavy companions + diff in parallel with the sync patch/tool setup below.
+	// Await before factory returns so their session_start handlers are bound
+	// before Pi emits session_start (missed events otherwise).
+	const optionalBundlesReady = startOptionalBundles(pi);
+	const diffReady = preloadDiff();
+
 	registerPromptGlyphWrapper(pi);
 	registerThinkingExpandWrapper(pi);
 	patchToolExecutionBackgroundSync();
@@ -6323,6 +6495,8 @@ export default function (pi: ExtensionAPI) {
 	patchContainerParentTracking();
 	patchGlobalToolBorders();
 	patchCustomMessageRender();
+	patchSkillInvocationRender();
+	patchCustomEditorNewlinePriority();
 	patchUserMessageRender();
 	patchBashExecutionRender();
 	patchPromptEditorRender();
@@ -6400,18 +6574,21 @@ export default function (pi: ExtensionAPI) {
 	};
 	const applyCcToolsUiSetting = (id: string, value: string, ctx: any): void => {
 		if (id.startsWith("companion:")) {
-			if (value !== COMPANION_INSTALL_VALUE) return; // ignore display values
-			const source = id.slice("companion:".length);
-			try {
-				piPackagesFile.install(source);
-				if (ctx.hasUI) ctx.ui.notify(`Added ${source} — /reload to activate`, "info");
-			} catch (err) {
-				if (ctx.hasUI)
-					ctx.ui.notify(
-						`Could not update ~/.pi/agent/settings.json: ${err instanceof Error ? err.message : String(err)}`,
-						"error",
-					);
-			}
+			// Lazy: settings UI owns the install sentinel string.
+			void loadSettingsUi().then(({ COMPANION_INSTALL_VALUE }) => {
+				if (value !== COMPANION_INSTALL_VALUE) return;
+				const source = id.slice("companion:".length);
+				try {
+					piPackagesFile.install(source);
+					if (ctx.hasUI) ctx.ui.notify(`Added ${source} — /reload to activate`, "info");
+				} catch (err) {
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Could not update ~/.pi/agent/settings.json: ${err instanceof Error ? err.message : String(err)}`,
+							"error",
+						);
+				}
+			});
 			return;
 		}
 		switch (id) {
@@ -6675,6 +6852,7 @@ export default function (pi: ExtensionAPI) {
 			const sub = parts[0] ?? "";
 			// Bare /cc-my-pi (or ui/settings) opens the interactive panel with live previews.
 			if (!sub || sub === "ui" || sub === "settings") {
+				const { openCcToolsSettingsPanel } = await loadSettingsUi();
 				await openCcToolsSettingsPanel(ctx, ccToolsSettingsController);
 				return;
 			}
@@ -6693,6 +6871,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (sub === "setup") {
+				const { openCcToolsSetupWizard } = await loadSettingsUi();
 				const outcome = await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
 				// "skip for now" leaves the marker unset so the next session re-opens.
 				if (outcome !== "skip-once") writeSettingsKey("ccMyPiSetupDone", true);
@@ -6958,6 +7137,9 @@ export default function (pi: ExtensionAPI) {
 	};
 
 	pi.on("session_start", async (event, ctx) => {
+		// Join deferred companion registration (header/statusline/queue/…).
+		// Started in factory without await so later packages load in parallel.
+		await optionalBundlesReady;
 		clearRtkRewriteState();
 		if (!ctx.hasUI) return;
 		patchUiNotifications(ctx.ui);
@@ -6975,7 +7157,9 @@ export default function (pi: ExtensionAPI) {
 		// Background update check (git fetch, max once per 24h). Deferred so it
 		// never competes with startup rendering; failures stay silent.
 		setTimeout(() => {
-			void maybeNotifyUpdate((msg, type) => ctx.ui.notify(msg, type));
+			void import("./update-check.js").then(({ maybeNotifyUpdate }) =>
+				maybeNotifyUpdate((msg, type) => ctx.ui.notify(msg, type)),
+			);
 		}, 3_000);
 		if (readSettings().ccMyPiSetupDone !== true) {
 			// First load: run the guided setup once. Intro "skip for now" leaves the
@@ -6987,6 +7171,7 @@ export default function (pi: ExtensionAPI) {
 				void (async () => {
 					let outcome: SetupWizardOutcome = "completed";
 					try {
+						const { openCcToolsSetupWizard } = await loadSettingsUi();
 						outcome = await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
 					} finally {
 						if (outcome !== "skip-once") writeSettingsKey("ccMyPiSetupDone", true);
@@ -7030,15 +7215,20 @@ export default function (pi: ExtensionAPI) {
 		},
 		renderCall(args, theme, ctx) {
 			syncToolCallStatus(ctx);
-			// SKILL.md reads: render as [skill] block matching /skill:name style
+			// SKILL.md reads: Claude-style Skill(name) row (not a plain Read).
 			const rawPath = String(args?.path ?? "");
 			const absPath = resolve(ctx.cwd ?? cwd, rawPath);
 			if (basename(absPath) === "SKILL.md") {
 				const skillName = basename(dirname(absPath)) || "SKILL.md";
-				const line =
-					theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
-					theme.fg("customMessageText", skillName);
-				return makeText(ctx.lastComponent, `${toolStatusDot(ctx, theme)}${line}${liveLineCountTrailing(ctx, theme)}`);
+				return makeText(
+					ctx.lastComponent,
+					skillHeader(
+						skillName,
+						theme,
+						toolStatusDot(ctx, theme),
+						liveLineCountTrailing(ctx, theme),
+					),
+				);
 			}
 			const summary = stableCallSummary(ctx, "_callSummary", () => {
 				let value = sp(args.path ?? "");
@@ -7512,6 +7702,18 @@ export default function (pi: ExtensionAPI) {
 					syncToolCallStatus(ctx);
 					ctx.state._openAiPatchFiles = [];
 					const summary = stableCallSummary(ctx, "_callSummary", () => summarizeOpenAiToolCall(name, args, theme, sp));
+					if (name === "Skill" || label === "Skill") {
+						const skillName =
+							(typeof summary === "string" && summary.startsWith("\0skill:")
+								? summary.slice("\0skill:".length)
+								: null) ||
+							getStringArg(args, "name") ||
+							"skill";
+						return makeText(
+							ctx.lastComponent,
+							skillHeader(skillName, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+						);
+					}
 					return makeText(
 						ctx.lastComponent,
 						toolHeader(label, summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
@@ -7608,4 +7810,6 @@ export default function (pi: ExtensionAPI) {
 		invalidateThemePaletteCache();
 		bumpToolBranchVisualEpoch();
 	});
+
+	await Promise.all([optionalBundlesReady, diffReady]);
 }

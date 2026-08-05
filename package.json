@@ -57,7 +57,10 @@
     "themes/cc-my-pi-dark.json",
     "config/config.example.json",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "extensions/queue-steer/index.ts",
+    "extensions/queue-steer/editor-render.ts",
+    "extensions/queue-steer/queue-state.ts"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/companion-packages.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/copy-command.ts extensions/queue-steer/index.ts extensions/claude-header/index.ts extensions/statusline/model-info/index.ts extensions/statusline/git-info/index.ts extensions/statusline/ui-customization/index.ts extensions/bash-execution-render.ts",
