@@ -611,6 +611,20 @@ export function registerBundledQueueSteer(pi: ExtensionAPI, isEnabled: () => boo
 			};
 
 			editor.handleInput = (data: string): void => {
+				// Shift+Enter before any queue/follow-up handling. Ghostty's common
+				// map (shift+enter → \x1b\r) is alt+enter/followUp without Kitty
+				// protocol; force newline via the editor chain instead.
+				if (
+					keybindings.matches(data, "tui.input.newLine") ||
+					data === "\x1b\r" ||
+					data === "\x1b[13;2~" ||
+					data === "\x1b[27;2;13~" ||
+					data === "\x1b[13;2u"
+				) {
+					handleInput(data);
+					return;
+				}
+
 				// Toggled off: no queue interception, no edit-session keys — same
 				// live-getter contract as registerBundledEscSteer.
 				if (!isEnabled()) {

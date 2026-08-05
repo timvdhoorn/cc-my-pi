@@ -2232,8 +2232,12 @@ function patchCustomEditorNewlinePriority(): void {
 	proto.handleInput = function patchedNewlinePriorityHandleInput(this: any, data: string) {
 		const kb = this?.keybindings;
 		const isConfiguredNewline = typeof kb?.matches === "function" && kb.matches(data, "tui.input.newLine");
-		// Hard-match common Shift+Enter encodings when keybinding table misses them.
+		// Hard-match Shift+Enter encodings. Critical: Ghostty often maps
+		// shift+enter=text:\x1b\r — without Kitty protocol Pi parses that as
+		// alt+enter → app.message.followUp (queue/send). Editor already treats
+		// \x1b\r as newline; we must reach Editor before followUp.
 		const isShiftEnterSeq =
+			data === "\x1b\r" ||
 			data === "\x1b[13;2~" ||
 			data === "\x1b[27;2;13~" ||
 			data === "\x1b[13;2u" ||
