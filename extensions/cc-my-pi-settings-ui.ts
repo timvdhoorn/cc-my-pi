@@ -85,7 +85,7 @@ export const SETTING_ORDER: Array<{
 		current: (s) => (s.groupToolCalls ? "on" : "off"),
 		describe: (s) =>
 			s.groupToolCalls
-				? "One header + ├/└ glance rows for concurrent tools"
+				? "Collapsed: Bash ×3 · preview (ctrl+o expands full tree)"
 				: "Each tool is a full separate row",
 	},
 	{
@@ -478,32 +478,30 @@ function paintStandaloneTool(
 
 function paintGrouped(lines: string[], snap: CcToolsUiSnapshot, p: Paint): void {
 	const b = p.branch;
-	lines.push(`${p.accent("◐")} ${p.title("2 tools")} ${p.muted("· 0.8s")}`);
+	// Default collapsed middle-ground: one dense line (not a full ├/└ tree).
+	lines.push(
+		`${p.ok("●")} ${p.title("Bash ×3")} ${p.muted("·")} ${p.accent("npm test")} ${p.dim("(ctrl+o expand)")}`,
+	);
+	lines.push("");
+	lines.push(p.dim("mixed tools collapse to:"));
+	lines.push(
+		`${p.ok("●")} ${p.title("4 tools")} ${p.muted("·")} ${p.accent("Bash ×2 · Read · Grep")}`,
+	);
 
-	// Read glance + optional body under tee
-	lines.push(`${b("├")} ${p.ok("●")} ${p.title("Read")}  ${p.accent("src/auth.ts")}`);
-	const readBody = readBodyLines(snap, p);
-	if (readBody.length > 0) {
-		// In grouped mode, body hangs under the branch with the same tool chrome.
-		const framed = frameBody(snap, p, readBody, `${b("│")} `);
-		lines.push(...framed);
-	}
+	// Expanded tree mock (what ctrl+o reveals).
+	lines.push("");
+	lines.push(p.dim("expanded:"));
+	lines.push(`${p.ok("●")} ${p.title("Bash:")} ${p.ok("3")} done`);
+	lines.push(`${b("├")} ${p.ok("●")} ${p.accent("npm test")}`);
+	lines.push(`${b("├")} ${p.ok("●")} ${p.accent("npm run lint")}`);
+	lines.push(`${b("└")} ${p.ok("●")} ${p.accent("npm run typecheck")}`);
 
-	// Bash glance
-	lines.push(`${b("└")} ${p.ok("●")} ${p.title("Bash")}  ${p.accent("npm test")}`);
-
-	// Finished bash body (aligned under corner — use spaces matching "└ ")
-	const bashFinished = bashBodyLines(snap, p);
-	if (bashFinished.length > 0) {
-		lines.push(...frameBody(snap, p, bashFinished, "  "));
-	}
-
-	// Optional second mock: running bash with live preview difference
 	if (snap.liveToolPreview) {
 		lines.push("");
 		lines.push(p.dim("while running:"));
-		lines.push(`${p.warn("●")} ${p.title("Bash")}  ${p.accent("npm test")} ${p.muted("(in flight)")}`);
-		lines.push(...frameBody(snap, p, bashBodyLines(snap, p, { running: true }), "  "));
+		lines.push(
+			`${p.warn("●")} ${p.title("Bash ×2")} ${p.muted("·")} ${p.warn("1 running")} ${p.muted("·")} ${p.accent("npm test")}`,
+		);
 	}
 }
 

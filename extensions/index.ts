@@ -752,6 +752,55 @@ function formatToolNameList(tools: any[]): string {
 		.join(", ") + (counts.size > 4 ? ", …" : "");
 }
 
+/** Humanized count list: `Bash ×3 · Skill · Grep`. */
+function formatToolCountList(tools: any[], maxKinds = 5): string {
+	const counts = new Map<string, number>();
+	for (const tool of tools) {
+		const name = getToolName(tool);
+		counts.set(name, (counts.get(name) ?? 0) + 1);
+	}
+	const entries = [...counts.entries()];
+	const shown = entries.slice(0, maxKinds).map(([name, count]) => {
+		const label = humanizeToolName(name);
+		return count > 1 ? `${label} ×${count}` : label;
+	});
+	if (entries.length > maxKinds) shown.push("…");
+	return shown.join(" · ");
+}
+
+/** Latest useful arg/preview snippet for a collapsed same-tool group. */
+function getCollapsedGroupPreview(tools: any[], maxLen = 56): string {
+	for (let i = tools.length - 1; i >= 0; i--) {
+		const summary = getToolArgSummary(tools[i]);
+		if (summary && stripAnsi(summary).trim()) return summarizeText(stripAnsi(summary).trim(), maxLen);
+	}
+	for (let i = tools.length - 1; i >= 0; i--) {
+		const line = stripAnsi(getCompactToolLine(tools[i], 160)).replaceAll(WRAP_MARK, "").trim();
+		if (!line) continue;
+		const label = humanizeToolName(getToolName(tools[i]));
+		const stripped = line.replace(new RegExp(`^${escapeRegex(label)}\\s*`, "i"), "").trim();
+		if (stripped) return summarizeText(stripped, maxLen);
+	}
+	return "";
+}
+
+/** Status chips only when not everything is cleanly done. */
+function formatCollapsedStatusBits(counts: Record<ToolStatus, number>): string {
+	if (counts.pending === 0 && counts.error === 0) return "";
+	const parts: string[] = [];
+	if (counts.pending) parts.push(statusText("pending", counts.pending));
+	if (counts.success && (counts.pending > 0 || counts.error > 0)) {
+		parts.push(statusText("success", counts.success));
+	}
+	if (counts.error) parts.push(statusText("error", counts.error));
+	return parts.join(`${TRANSPARENT_RESET} · `);
+}
+
+// Collapsed middle-ground thresholds (Claude is one-line "called X N times";
+// we keep a short preview / mix list, full tree only when expanded).
+const COLLAPSE_SAME_TOOL_MIN = 2;
+const COLLAPSE_MIXED_SUMMARY_MIN = 3;
+
 function escapeRegex(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1062,16 +1111,81 @@ class ToolGroupComponent extends Container {
 		const pendingTools = this.tools.filter((tool) => getToolStatusForGroup(tool) === "pending");
 		const headerBreathe = pendingTools.length > 0 && pendingTools.every((tool) => isAgentFamilyToolName(getToolName(tool)));
 		const light = groupStatusLight(overall, { agentBreathe: headerBreathe });
+		const total = this.tools.length;
+		const hint = toolOutputDetailHint(undefined as any, this.expanded, true);
+		const counts: Record<ToolStatus, number> = {
+			pending: status.pending,
+			success: status.success,
+			error: status.error,
+		};
+
+		// ---- Collapsed middle-ground (default) ----
+		// Claude Code collapses to "called X N times". We keep one dense line with
+		// a count + short preview (same tool) or a mix list (different tools),
+		// and only draw the full ├/└ tree when expanded (ctrl+o).
+		if (!this.expanded) {
+			if (groupedName && total >= COLLAPSE_SAME_TOOL_MIN) {
+				const statusBits = formatCollapsedStatusBits(counts);
+				const preview = getCollapsedGroupPreview(this.tools);
+				const parts = [
+					`${light}`,
+					`${label} ×${total}`,
+				];
+				if (statusBits) parts.push(statusBits);
+				if (preview) parts.push(`${FG_DIM}${preview}${TRANSPARENT_RESET}`);
+				const line = ` ${parts.join(` ${TRANSPARENT_RESET}· `)}${hint}`;
+				const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
+				if (canCache) {
+					this.dirty = false;
+					this.cachedWidth = safeWidth;
+					this.cachedEpoch = _toolBranchVisualEpoch;
+					this.cachedMode = toolBackgroundMode;
+					this.cachedExpanded = this.expanded;
+					this.cachedBlinkPhase = true;
+					this.cachedStatusKey = status.key;
+					this.cachedToolCount = total;
+					this.cachedLines = lines;
+				} else {
+					this.clearRenderCache();
+				}
+				return lines;
+			}
+
+			if (!groupedName && total >= COLLAPSE_MIXED_SUMMARY_MIN) {
+				const statusBits = formatCollapsedStatusBits(counts);
+				const mix = formatToolCountList(this.tools);
+				const parts = [`${light}`, `${total} tools`, mix];
+				if (statusBits) parts.splice(2, 0, statusBits);
+				const line = ` ${parts.join(` ${TRANSPARENT_RESET}· `)}${hint}`;
+				const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
+				if (canCache) {
+					this.dirty = false;
+					this.cachedWidth = safeWidth;
+					this.cachedEpoch = _toolBranchVisualEpoch;
+					this.cachedMode = toolBackgroundMode;
+					this.cachedExpanded = this.expanded;
+					this.cachedBlinkPhase = true;
+					this.cachedStatusKey = status.key;
+					this.cachedToolCount = total;
+					this.cachedLines = lines;
+				} else {
+					this.clearRenderCache();
+				}
+				return lines;
+			}
+			// 1 tool, or 2 mixed tools: keep the compact per-row tree below.
+		}
+
+		// ---- Expanded (or small collapsed groups): header + branched rows ----
 		const summaryLabel = `${label}:`;
 		const countParts: string[] = [];
 		if (status.pending) countParts.push(statusText("pending", status.pending));
 		if (status.success) countParts.push(statusText("success", status.success));
 		if (status.error) countParts.push(statusText("error", status.error));
 		const countsText = countParts.join(`${TRANSPARENT_RESET} • `);
-		const summary = ` ${light} ${summaryLabel} ${countsText}${names ? ` ${TRANSPARENT_RESET}• ${names}` : ""}${toolOutputDetailHint(undefined as any, this.expanded, true)}`;
+		const summary = ` ${light} ${summaryLabel} ${countsText}${names ? ` ${TRANSPARENT_RESET}• ${names}` : ""}${hint}`;
 		const lines = [" ".repeat(safeWidth), clampLineWidth(summary, safeWidth)];
 		const childWidth = Math.max(1, safeWidth - 6);
-		const total = this.tools.length;
 
 		for (let index = 0; index < total; index++) {
 			const tool = this.tools[index];
