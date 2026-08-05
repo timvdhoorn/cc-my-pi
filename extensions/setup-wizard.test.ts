@@ -27,6 +27,8 @@ const stubKb: any = { matches: () => false };
 const baseSnapshot: CcToolsUiSnapshot = {
   toolBackground: "outlines",
   groupToolCalls: true,
+  groupToolCallsAcrossTurns: true,
+  showCompactToolStatusDots: false,
   extraToolOutputExpanded: false,
   themeAdaptive: true,
   liveToolPreview: true,
@@ -36,12 +38,17 @@ const baseSnapshot: CcToolsUiSnapshot = {
   queueSteerEnabled: true,
   branchPreset: "theme",
   sessionCommandsEnabled: true,
+  copyCommandEnabled: true,
+  copyAlwaysFull: false,
   spinnerEnabled: true,
   spinnerVerbColor: "borderAccent",
   spinnerStatusColor: "muted",
   readOutputMode: "preview",
   bashOutputMode: "opencode",
   diffCollapsedLines: "stock",
+  claudeHeaderEnabled: true,
+  quietStartup: false,
+  statuslineEnabled: true,
   statuslineCtxStyle: "claude",
   statuslineShowWorktree: true,
   companionsInstalled: { "npm:pi-context-view": true },
@@ -200,6 +207,12 @@ test("wizard: cycling a value applies it live and shows the changed preview", as
 
   component.handleInput(ESC); // finish
   assert.equal(await done, "completed");
+});
+
+test("wizard: includes 1.3 tool-group compatibility settings", () => {
+  const rows = new Map(SETTING_ORDER.map((row) => [row.id, row]));
+  assert.equal(rows.get("groupToolCallsAcrossTurns")?.current(baseSnapshot), "on");
+  assert.equal(rows.get("showCompactToolStatusDots")?.current(baseSnapshot), "off");
 });
 
 test("wizard: custom steps derive from SETTING_ORDER and enter through all closes it", async () => {

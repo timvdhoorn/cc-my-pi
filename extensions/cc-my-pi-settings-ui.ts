@@ -17,6 +17,8 @@ export type BashOutputMode = "opencode" | "summary" | "preview";
 export interface CcToolsUiSnapshot {
 	toolBackground: ToolStyle;
 	groupToolCalls: boolean;
+	groupToolCallsAcrossTurns: boolean;
+	showCompactToolStatusDots: boolean;
 	extraToolOutputExpanded: boolean;
 	themeAdaptive: boolean;
 	liveToolPreview: boolean;
@@ -87,6 +89,28 @@ export const SETTING_ORDER: Array<{
 			s.groupToolCalls
 				? 'Claude-style prose: "Called Bash 3 times" — no command dump'
 				: "Each tool is a full separate row",
+	},
+	{
+		id: "groupToolCallsAcrossTurns",
+		label: "Cross-turn groups",
+		values: ["on", "off"],
+		current: (s) => (s.groupToolCallsAcrossTurns ? "on" : "off"),
+		describe: (s) =>
+			s.groupToolCallsAcrossTurns
+				? "Group sequential calls across hidden thinking-only turns"
+				: "Only group calls emitted together in one assistant turn",
+		wizardDefault: () => "on",
+	},
+	{
+		id: "showCompactToolStatusDots",
+		label: "Group status dots",
+		values: ["off", "on"],
+		current: (s) => (s.showCompactToolStatusDots ? "on" : "off"),
+		describe: (s) =>
+			s.showCompactToolStatusDots
+				? "Show the legacy green/pending dot on compact groups"
+				: "Stable compact prose without a transient status dot",
+		wizardDefault: () => "off",
 	},
 	{
 		id: "extraToolOutputExpanded",

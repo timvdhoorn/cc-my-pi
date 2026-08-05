@@ -55,7 +55,7 @@ Every subcommand hangs off the single root command `/cc-my-pi`:
 
 ## Screenshots
 
-**Tool rendering** — grouped tool rows (⏺ dots, collapsed `∴ Thinking`, spinner with esc hint)
+**Tool rendering** — stable compact `Called …` groups across parallel and sequential tool turns
 
 ![Tool rendering](assets/screenshots/tool-rendering.png)
 
@@ -111,7 +111,10 @@ same file.
 | Double-Esc clear | Double-Esc (within 800ms) on a non-empty idle draft clears it | `doubleEscClearEnabled` | `true` | live |
 | Queue steer | Vendored `pi-queue-steer` — visible steering/follow-up queue | `queueSteerEnabled` | `true` | live |
 | Theme-adaptive palette | Borders, branch connectors, dim text, spinner accent, and diff backgrounds follow the active pi theme | `themeAdaptive` | `true` | live |
-| Grouped tool calls | Adjacent/concurrent tool calls collapse under a compact status header | `groupToolCalls` | `true` | live |
+| Grouped tool calls | Tool calls collapse under compact `Called …` prose | `groupToolCalls` | `true` | live |
+| Cross-turn tool groups | Extend groups across sequential hidden thinking-only assistant turns; set false for pre-1.3 same-turn-only grouping | `groupToolCallsAcrossTurns` | `true` | live (future groups) |
+| Compact group status dots | Show pre-1.3 green/pending dots before compact groups settle | `showCompactToolStatusDots` | `false` | live |
+| Multiline composer alignment | Every continuation row aligns beneath text after the `❯` prompt | — (always on) | on | — |
 | Live tool preview | A few output lines shown for still-running tool calls | `liveToolPreview` | `true` | live |
 | Statusline | Bundled footer module: model/ctx gauge, git segment (with the `+N −N` line diffstat), MCP status, and a thinking level color-coded to match the editor border. Sub-settings `statuslineCtxStyle` (context gauge style) and `statuslineShowWorktree` (`wt <name>` segment) apply live (≤5s) | `statuslineEnabled` (module on/off), `statuslineCtxStyle`, `statuslineShowWorktree` | `true`, `"claude"`, `true` | `statuslineEnabled` reload; sub-settings live (≤5s) |
 
@@ -172,7 +175,64 @@ Keeps the fixed Claude-style palette regardless of the active pi theme.
 ```json
 { "groupToolCalls": false }
 ```
-Adjacent tool calls render as separate rows instead of a grouped block.
+Tool calls render as separate rows instead of a grouped block.
+
+```json
+{
+  "groupToolCallsAcrossTurns": false,
+  "showCompactToolStatusDots": true
+}
+```
+Restores the pre-1.3 tool-group details: same-turn-only groups and transient compact-group status dots. These settings are also available in `/cc-my-pi settings` and the custom setup wizard.
+
+### 1.3 interaction examples
+
+#### Multiline composer alignment (always on)
+
+Every continuation row aligns beneath the first row's text, for drafts of any length:
+
+```text
+❯ first line
+  second line
+  third line
+  fourth line
+```
+
+#### `groupToolCallsAcrossTurns`
+
+`true` (default) combines parallel calls and sequential calls separated only by hidden thinking:
+
+```text
+Called Skill, Bash 2 times, Read, Ctx Execute 3 times
+```
+
+`false` restores pre-1.3 same-turn grouping; later sequential calls remain separate:
+
+```text
+Called Skill, Bash 2 times
+
+Read ./package.json
+Ctx Execute inspect settings
+Ctx Execute run checks
+```
+
+Actual assistant prose always ends a group in both modes.
+
+#### `showCompactToolStatusDots`
+
+`false` (default) keeps compact group shape stable while work runs:
+
+```text
+Called Bash 2 times, Read · 1 running
+Called Bash 2 times, Read
+```
+
+`true` restores pre-1.3 pending/error dots:
+
+```text
+● Called Bash 2 times, Read · 1 running
+Called Bash 2 times, Read
+```
 
 ```json
 { "liveToolPreview": false }
@@ -232,6 +292,9 @@ not repeated here):
   "expandedPreviewMaxLines": 4000,
   "extraExpandedPreviewMaxLines": 12000,
   "extraToolOutputExpanded": false,
+  "groupToolCalls": true,
+  "groupToolCallsAcrossTurns": true,
+  "showCompactToolStatusDots": false,
   "bashOutputMode": "opencode",
   "bashCollapsedLines": 10,
   "liveToolPreviewLines": 5,
@@ -257,6 +320,9 @@ not repeated here):
 | `expandedPreviewMaxLines` | `4000` | Max lines when expanded with Ctrl+O |
 | `extraExpandedPreviewMaxLines` | `12000` | Max lines after Ctrl+Shift+O extra-detail mode |
 | `extraToolOutputExpanded` | `false` | Start with Ctrl+Shift+O extra-detail mode enabled |
+| `groupToolCalls` | `true` | Collapse tool calls into compact prose groups |
+| `groupToolCallsAcrossTurns` | `true` | Keep grouping across hidden thinking-only assistant turns |
+| `showCompactToolStatusDots` | `false` | Show legacy transient dots on pending compact groups |
 | `bashCollapsedLines` | `10` | Lines for collapsed bash output |
 | `liveToolPreviewLines` | `5` | Lines shown in the collapsed live preview |
 | `diffCollapsedLines` | `24` | Diff lines before collapsing |
@@ -278,10 +344,11 @@ Assistant Markdown unordered lists always render with `-` markers (Claude Code p
 /cc-my-pi detail toggle   # same mode as Ctrl+Shift+O
 ```
 
-The settings panel lists style, grouping, extra detail, branch color,
-image paster, Esc continues queue, double-Esc clears draft,
-theme-adaptive, spinner verb/status colors, live preview, and read/bash
-output modes. Most changes apply immediately; changing image paster or the
+The settings panel and custom setup wizard list style, grouping, cross-turn grouping,
+compact-group status dots, extra detail, branch color,
+image paster, Esc continues queue, double-Esc clears draft, theme-adaptive,
+spinner verb/status colors, live preview, and read/bash output modes. Most changes
+apply immediately; changing image paster or the
 spinner module requires `/reload`. The preview block under the list shows a
 mock tool tree for the current combination.
 

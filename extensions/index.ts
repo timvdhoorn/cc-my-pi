@@ -209,6 +209,10 @@ interface SettingsFile {
 	extraExpandedPreviewMaxLines?: number;
 	extraToolOutputExpanded?: boolean;
 	groupToolCalls?: boolean;
+	/** Group sequential calls across assistant turns containing no visible text. Defaults true. */
+	groupToolCallsAcrossTurns?: boolean;
+	/** Show the legacy transient status dot on compact tool groups. Defaults false. */
+	showCompactToolStatusDots?: boolean;
 	bashOutputMode?: "opencode" | "summary" | "preview";
 	bashCollapsedLines?: number;
 	/** Show a small live output preview while tools are still running. Defaults to true. */
@@ -628,6 +632,14 @@ function toolGroupingEnabled(): boolean {
 
 function setToolGroupingEnabled(enabled: boolean): void {
 	writeSettingsKey("groupToolCalls", enabled);
+}
+
+function groupToolCallsAcrossTurnsEnabled(): boolean {
+	return readSettings().groupToolCallsAcrossTurns !== false;
+}
+
+function showCompactToolStatusDotsEnabled(): boolean {
+	return readSettings().showCompactToolStatusDots === true;
 }
 
 /**
@@ -1172,13 +1184,16 @@ class ToolGroupComponent extends Container {
 			safeFgAnsi(getGlobalPiTheme() as Theme, "muted") ?? "\x1b[38;2;160;160;160m";
 		const phrase = formatCalledToolsPhrase(this.tools);
 		const statusBits = formatCollapsedStatusBits(counts);
-		// Compact groups never flash a transient status dot. Pending/error state
-		// stays visible in prose (`1 running`, `1 failed`) without changing shape.
 		const mutedPhrase = `${CALL_GROUP_FG}${phrase}${TRANSPARENT_RESET}`;
 		const body = statusBits
 			? `${mutedPhrase}${TRANSPARENT_RESET} · ${statusBits}`
 			: mutedPhrase;
-		const lines = [" ".repeat(safeWidth), clampLineWidth(` ${body}`, safeWidth)];
+		let line = ` ${body}`;
+		if (showCompactToolStatusDotsEnabled() && (status.pending > 0 || status.error > 0)) {
+			const overall: ToolStatus = status.error > 0 ? "error" : "pending";
+			line = ` ${groupStatusLight(overall)} ${body}`;
+		}
+		const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
 
 		// Final clamp already applied per-line above; avoid a second full pass.
 		if (canCache) {
@@ -1205,6 +1220,7 @@ function isToolGroupComponent(value: unknown): value is ToolGroupComponent {
 function isIgnorableToolSeparator(value: unknown): boolean {
 	if (value instanceof Spacer) return true;
 	if (value instanceof AssistantMessageComponent) {
+		if (!groupToolCallsAcrossTurnsEnabled()) return false;
 		const message = (value as any).lastMessage;
 		if (Array.isArray(message?.content)) {
 			// Sequential tool calls create a fresh assistant component containing
@@ -6702,6 +6718,8 @@ export default async function (pi: ExtensionAPI) {
 		return {
 			toolBackground,
 			groupToolCalls: toolGroupingEnabled(),
+			groupToolCallsAcrossTurns: groupToolCallsAcrossTurnsEnabled(),
+			showCompactToolStatusDots: showCompactToolStatusDotsEnabled(),
 			extraToolOutputExpanded,
 			themeAdaptive: themeAdaptiveEnabled(),
 			liveToolPreview: settings.liveToolPreview !== false,
@@ -6762,6 +6780,17 @@ export default async function (pi: ExtensionAPI) {
 				setToolGroupingEnabled(enabled);
 				if (!enabled) ungroupActiveToolGroups();
 				if (ctx.hasUI) ctx.ui.setToolsExpanded(ctx.ui.getToolsExpanded());
+				break;
+			}
+			case "groupToolCallsAcrossTurns": {
+				writeSettingsKey("groupToolCallsAcrossTurns", value === "on");
+				if (ctx.hasUI) ctx.ui.setToolsExpanded(ctx.ui.getToolsExpanded());
+				break;
+			}
+			case "showCompactToolStatusDots": {
+				writeSettingsKey("showCompactToolStatusDots", value === "on");
+				for (const group of ACTIVE_TOOL_GROUPS) group.invalidate?.();
+				if (ctx.hasUI) ctx.ui.requestRender?.();
 				break;
 			}
 			case "extraToolOutputExpanded": {

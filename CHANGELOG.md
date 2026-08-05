@@ -5,27 +5,44 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-05
+
+### Added
+
+- **Tool-group compatibility settings** — `groupToolCallsAcrossTurns` and
+  `showCompactToolStatusDots` expose the 1.3 grouping changes in the settings panel,
+  custom setup wizard, config example, and README. Defaults use the new behavior;
+  either option can restore its pre-1.3 equivalent independently.
+
 ### Changed
 
-- **Reliable multiline composer and tool grouping** — align every continuation row beneath the prompt, insert Shift+Enter newlines before queue handling, preserve grouping across reloads and hidden thinking-only assistant turns, and remove transient status-dot flashes from compact groups.
+- **Claude-style multiline composer** — every continuation row aligns beneath the text
+  after the `❯` prompt, regardless of draft length.
+- **Turn-spanning tool groups** — sequential calls separated only by hidden thinking
+  turns join the same muted `Called …` group; actual assistant text remains a boundary.
+- **Stable compact group status** — pending/failed state stays in prose without a
+  transient green dot unless legacy dots are explicitly enabled.
 - **Lighter Called-line color** — mid-gray (~#a0a0a0 / theme muted), not near-black FG_DIM.
-- **Faster image paste** — editor hover preview off; collapsible submitted previews; terminal image width 40 cells.
-- **Shift+Enter outermost wrap** — re-assert after paster/queue-steer so newline wins over follow-up.
-- **Busy spinner = Claude shape** — `Crafting… (esc to interrupt · ↓ 1.4k tokens · 1m 2s)`; no thinking chip.
-- **Claude-style tool groups** — muted `Called Bash 3 times` / `Called Microsoft 365 3 times` (MCP by server), no command trees.
-- **Hide thinking chrome** — no more `∴ Thinking` / duration rows.
-- **Tool groups = identity only** — e.g. `Bash ×3` with no command tree or previews.
-- **Stable dense tools** — with grouping on, live multi-line bash tails stay off until expand, so tools no longer flash full then collapse into a group line.
-- **Denser tool groups** — collapsed same-tool runs show `Bash ×3 · preview` (mixed: `4 tools · Bash ×2 · Skill`); full ├/└ tree only when expanded (ctrl+o).
-- **Faster Pi startup** — optional companions (statusline/Effect git-info, queue-steer,
-  header, esc/image paste, …) load in parallel during the factory instead of on the
-  static import graph; settings UI and `diff` load on first use.
-- **Statusline footer placement** — footer sits above `widgetBelow` (e.g. pi-subagents
-  fleet rows) so main/worker lines render under mem/caveman.
-- **Skill rows** — Claude-style `Skill(name)` for skill invocations and SKILL.md reads
-  (was bold `[skill] name`).
-- **Shift+Enter** — prefer newline over follow-up/submit when CustomEditor would steal
-  Shift+Enter for `app.message.followUp` (steer queue).
+- **Faster image paste** — editor hover preview off; collapsible submitted previews;
+  terminal image width 40 cells.
+- **Busy spinner = Claude shape** — `Crafting… (esc to interrupt · ↓ 1.4k tokens · 1m 2s)`;
+  no thinking chip.
+- **Dense identity-only tool groups** — muted `Called Bash 3 times` /
+  `Called Microsoft 365 3 times` prose replaces command trees and live body flashes.
+- **Hidden thinking chrome** — no more `∴ Thinking` / duration rows.
+- **Faster Pi startup** — optional companions load in parallel; settings UI and `diff`
+  load lazily.
+- **Statusline footer placement** — footer sits above `widgetBelow` so fleet rows remain
+  below memory/caveman status.
+- **Skill rows** — Claude-style `Skill(name)` replaces bold `[skill] name`.
+
+### Fixed
+
+- **Shift+Enter under queue-steer** — recognized Ghostty/Kitty sequences insert a newline
+  directly instead of reaching follow-up handling; outer editor composition is reasserted
+  after paster/queue wrappers.
+- **Grouping after `/reload`** — stable prototype dispatch refreshes the active grouping
+  hook instead of retaining stale `ToolExecutionComponent` identities.
 
 ## [1.2.0] - 2026-07-21
 
