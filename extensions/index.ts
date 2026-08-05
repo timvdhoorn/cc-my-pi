@@ -189,7 +189,6 @@ const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-cust
 const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-user-message-render");
 const PROMPT_EDITOR_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-prompt-editor-render");
 const UI_NOTIFY_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-ui-notifications-v2");
-const NEWLINE_PRIORITY_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-newline-priority");
 const SKILL_INVOCATION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-skill-invocation");
 const WRAP_MARK = "\uE000";
 const KITTY_IMAGE_PREFIX = "\x1b_G";
@@ -2330,38 +2329,70 @@ function formatSubagentNotification(lines: string[], width: number): string[] {
 	return frameToolLikeLines(indented, width);
 }
 
+const SHIFT_ENTER_NEWLINE_FEATURE = "cc-shift-enter-newline";
+
+/** True when input should insert a newline, not submit/follow-up. */
+function isShiftEnterNewlineData(data: string, keybindings?: { matches?: (d: string, id: string) => boolean }): boolean {
+	if (typeof keybindings?.matches === "function" && keybindings.matches(data, "tui.input.newLine")) {
+		return true;
+	}
+	// Ghostty historical: shift+enter=text:\x1b\r — without Kitty this is alt+enter/followUp.
+	if (data === "\x1b\r") return true;
+	// CSI u / modifyOtherKeys Shift+Enter
+	if (data === "\x1b[13;2u" || data === "\x1b[27;2;13~" || data === "\x1b[13;2~") return true;
+	if (typeof data === "string" && /^\x1b\[13;\d*u$/.test(data) && data.includes(";2")) return true;
+	// Kitty with associated text sometimes appends the character after the CSI u payload.
+	if (typeof data === "string" && data.startsWith("\x1b[13;2u")) return true;
+	return false;
+}
+
 /**
- * CustomEditor checks app actions (incl. followUp) before Editor newLine handling.
- * On some terminals Shift+Enter shares a sequence with alt+enter / followUp, so the
- * message is queued/sent instead of inserting a newline. Prefer newLine first.
+ * Instance-level editor wrap (NOT CustomEditor.prototype).
+ *
+ * jiti loads extensions with moduleCache:false, so a prototype patch on the
+ * CustomEditor copy resolved inside the extension does not affect the live
+ * editor class pi already constructed. Wrap the active factory instead
+ * (same pattern as prompt-glyph / esc-steer), outermost via deferred install.
  */
-function patchCustomEditorNewlinePriority(): void {
-	const proto = CustomEditor.prototype as any;
-	if (proto[NEWLINE_PRIORITY_PATCH_FLAG]) return;
-	const original = proto.handleInput;
-	if (typeof original !== "function") return;
-	const editorBase = Object.getPrototypeOf(CustomEditor.prototype) as {
-		handleInput?: (data: string) => void;
+function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
+	const install = (ctx: any): void => {
+		if (ctx.mode !== "tui") return;
+		const previous = ctx.ui.getEditorComponent();
+		const features: ReadonlySet<string> =
+			(previous as any)?.[EDITOR_FEATURES_SYMBOL] ?? new Set();
+		if (features.has(SHIFT_ENTER_NEWLINE_FEATURE)) return;
+
+		const factory = ((tui: any, theme: any, keybindings: any) => {
+			const editor =
+				previous?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
+			const prevHandle = editor.handleInput.bind(editor);
+
+			editor.handleInput = (data: string): void => {
+				if (isShiftEnterNewlineData(data, keybindings)) {
+					const ed = editor as { addNewLine?: () => void };
+					if (typeof ed.addNewLine === "function") {
+						ed.addNewLine();
+						return;
+					}
+				}
+				prevHandle(data);
+			};
+
+			return editor;
+		}) as any;
+		factory[EDITOR_FEATURES_SYMBOL] = new Set([...features, SHIFT_ENTER_NEWLINE_FEATURE]);
+		ctx.ui.setEditorComponent(factory);
 	};
-	proto.handleInput = function patchedNewlinePriorityHandleInput(this: any, data: string) {
-		const kb = this?.keybindings;
-		const isConfiguredNewline = typeof kb?.matches === "function" && kb.matches(data, "tui.input.newLine");
-		// Hard-match Shift+Enter encodings. Critical: Ghostty often maps
-		// shift+enter=text:\x1b\r — without Kitty protocol Pi parses that as
-		// alt+enter → app.message.followUp (queue/send). Editor already treats
-		// \x1b\r as newline; we must reach Editor before followUp.
-		const isShiftEnterSeq =
-			data === "\x1b\r" ||
-			data === "\x1b[13;2~" ||
-			data === "\x1b[27;2;13~" ||
-			data === "\x1b[13;2u" ||
-			(typeof data === "string" && /^\x1b\[13;\d*u$/.test(data) && data.includes(";2"));
-		if ((isConfiguredNewline || isShiftEnterSeq) && typeof editorBase.handleInput === "function") {
-			return editorBase.handleInput.call(this, data);
-		}
-		return original.call(this, data);
+
+	const installLate = (ctx: any): void => {
+		install(ctx);
+		// Stay outermost after queue-steer / esc-steer / pi-paster compose.
+		setTimeout(() => install(ctx), 0);
+		setTimeout(() => install(ctx), 50);
 	};
-	proto[NEWLINE_PRIORITY_PATCH_FLAG] = true;
+
+	pi.on("session_start", (_event, ctx) => installLate(ctx));
+	pi.on("agent_start", (_event, ctx) => installLate(ctx));
 }
 
 /** Claude-style skill invocation card: Skill(name) instead of bold [skill] + expand hint. */
@@ -6614,7 +6645,7 @@ export default async function (pi: ExtensionAPI) {
 	patchGlobalToolBorders();
 	patchCustomMessageRender();
 	patchSkillInvocationRender();
-	patchCustomEditorNewlinePriority();
+	registerShiftEnterNewlineWrapper(pi);
 	patchUserMessageRender();
 	patchBashExecutionRender();
 	patchPromptEditorRender();
