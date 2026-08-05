@@ -42,6 +42,46 @@ interface DashboardTui extends RenderableNode {
   requestRender(force?: boolean): void;
 }
 
+/**
+ * Pi default stack: ... | editor | widgetBelow | footer.
+ * FleetView (pi-subagents) sits in widgetBelow — only aboveEditor|belowEditor
+ * placements exist upstream. Move our footer above widgetBelow so main/worker
+ * rows land under mem/caveman. Lives here (not pi-subagents) so package updates
+ * don't clobber it. Idempotent: no-op when footer already not last.
+ */
+function placeFooterAboveBelowEditorWidgets(
+  tui: DashboardTui,
+  footer: RenderableNode,
+): boolean {
+  const children = tui.children;
+  if (!Array.isArray(children) || children.length < 2) return false;
+  const footerIndex = children.indexOf(footer);
+  if (footerIndex === -1) return false;
+  // Already above trailing below-editor widgets.
+  if (footerIndex !== children.length - 1) return false;
+  const belowIndex = footerIndex - 1;
+  const below = children[belowIndex];
+  if (!below) return false;
+  children[belowIndex] = footer;
+  children[footerIndex] = below;
+  tui.requestRender(true);
+  return true;
+}
+
+function scheduleFooterAboveFleet(
+  tui: DashboardTui,
+  footer: RenderableNode,
+  timers: Array<ReturnType<typeof setTimeout>>,
+) {
+  // setFooter addChild runs after factory returns — microtask + short retries.
+  queueMicrotask(() => placeFooterAboveBelowEditorWidgets(tui, footer));
+  for (const delay of [0, 50, 250, 1_000]) {
+    timers.push(
+      setTimeout(() => placeFooterAboveBelowEditorWidgets(tui, footer), delay),
+    );
+  }
+}
+
 const RESET = "\x1b[0m";
 const CLAUDE_ORANGE = "\x1b[38;2;215;119;87m";
 const DIM_GRAY = "\x1b[38;2;153;153;153m";
@@ -196,6 +236,7 @@ export default function uiCustomization(
   let requestRender: (() => void) | undefined;
   let activeTui: DashboardTui | undefined;
   let themeRemovalTimers: Array<ReturnType<typeof setTimeout>> = [];
+  let footerLayoutTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   const stopModelListener = pi.events.on(MODEL_INFO_CHANNEL, (value) => {
     if (!isModelInfoState(value)) return;
@@ -252,7 +293,7 @@ export default function uiCustomization(
     ctx.ui.setFooter((tui, theme, footerData: ReadonlyFooterDataProvider) => {
       requestRender = () => tui.requestRender();
 
-      return {
+      const footer: RenderableNode = {
         invalidate() {},
         render(width: number) {
           const sl = readStatuslineSettings(ctx.cwd);
@@ -363,6 +404,12 @@ export default function uiCustomization(
           ];
         },
       };
+
+      for (const timer of footerLayoutTimers) clearTimeout(timer);
+      footerLayoutTimers = [];
+      scheduleFooterAboveFleet(tui, footer, footerLayoutTimers);
+
+      return footer;
     });
 
     ctx.ui.setTitle(`pi · ${title}`);
@@ -385,6 +432,8 @@ export default function uiCustomization(
     stopGitListener();
     for (const timer of themeRemovalTimers) clearTimeout(timer);
     themeRemovalTimers = [];
+    for (const timer of footerLayoutTimers) clearTimeout(timer);
+    footerLayoutTimers = [];
     activeTui = undefined;
     requestRender = undefined;
     if (ctx.mode === "tui") {
