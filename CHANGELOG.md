@@ -7,6 +7,7 @@
 
 ### Changed
 
+- **Reliable multiline composer and tool grouping** — align every continuation row beneath the prompt, insert Shift+Enter newlines before queue handling, preserve grouping across reloads and hidden thinking-only assistant turns, and remove transient status-dot flashes from compact groups.
 - **Lighter Called-line color** — mid-gray (~#a0a0a0 / theme muted), not near-black FG_DIM.
 - **Faster image paste** — editor hover preview off; collapsible submitted previews; terminal image width 40 cells.
 - **Shift+Enter outermost wrap** — re-assert after paster/queue-steer so newline wins over follow-up.

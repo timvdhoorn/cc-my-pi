@@ -7,6 +7,7 @@ export function patchEditorPromptRender(
   EditorClass: { prototype: EditorPrototype },
   patchFlag: symbol,
   decorate: (line: string, paddingX: number, width: number) => string,
+  decorateContinuation: (line: string, paddingX: number, width: number) => string = indentEditorContinuationLine,
 ): void {
   const proto = EditorClass.prototype;
   const flagged = proto as EditorPrototype & Record<symbol, unknown>;
@@ -15,11 +16,28 @@ export function patchEditorPromptRender(
   proto.render = function patchedEditorPromptRender(width: number): string[] {
     const lines = originalRender.call(this, width);
     if (lines.length >= 3 && width >= 2) {
-      lines[1] = decorate(lines[1] ?? "", this.getPaddingX?.() ?? 0, width);
+      const paddingX = this.getPaddingX?.() ?? 0;
+      lines[1] = decorate(lines[1] ?? "", paddingX, width);
+      for (let index = 2; index < lines.length - 1; index++) {
+        lines[index] = decorateContinuation(lines[index] ?? "", paddingX, width);
+      }
     }
     return lines;
   };
   flagged[patchFlag] = true;
+}
+
+export function indentEditorContinuationLine(
+  line: string,
+  paddingX: number,
+  width: number,
+  truncate: (line: string, width: number, ellipsis: string) => string = (value, limit) => value.slice(0, limit),
+): string {
+  const removablePadding = Math.min(
+    Math.max(0, paddingX),
+    line.match(/^ */)?.[0].length ?? 0,
+  );
+  return truncate(`  ${line.slice(removablePadding)}`, Math.max(0, width), "");
 }
 
 export interface UserMessageRenderOptions {

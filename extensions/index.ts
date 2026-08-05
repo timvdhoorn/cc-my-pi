@@ -57,6 +57,7 @@ import type { HeaderHooks } from "./claude-header/index.js";
 import { COMPANION_PACKAGES, createPiPackagesFile } from "./companion-packages.js";
 import { createQuietStartupFile } from "./pi-agent-settings.js";
 import {
+	indentEditorContinuationLine,
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
 	renderClaudeUserMessageLine,
@@ -183,6 +184,8 @@ const PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-container-render");
 const TOOL_RENDER_CACHE = Symbol.for("pi-claude-style-tools:tool-render-cache");
 const COMPONENT_PARENT = Symbol.for("pi-claude-style-tools:component-parent");
 const PARENT_TRACKING_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-parent-tracking");
+const PARENT_TRACKING_DISPATCH_FLAG = Symbol.for("pi-claude-style-tools:parent-tracking-dispatch-v2");
+const PARENT_TRACKING_GROUP_HOOK = Symbol.for("pi-claude-style-tools:parent-tracking-group-hook");
 const TOOL_CACHE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool-cache-invalidation");
 const TOOL_IMAGE_EXPAND_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-read-image-expansion");
 const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-custom-message-render");
@@ -1157,10 +1160,6 @@ class ToolGroupComponent extends Container {
 		// almost entirely settled history, which is the expensive warm path.
 		const canCache = status.pending === 0;
 
-		const overall: ToolStatus = status.error > 0 ? "error" : status.pending > 0 ? "pending" : "success";
-		const pendingTools = this.tools.filter((tool) => getToolStatusForGroup(tool) === "pending");
-		const headerBreathe = pendingTools.length > 0 && pendingTools.every((tool) => isAgentFamilyToolName(getToolName(tool)));
-		const light = groupStatusLight(overall, { agentBreathe: headerBreathe });
 		const counts: Record<ToolStatus, number> = {
 			pending: status.pending,
 			success: status.success,
@@ -1173,14 +1172,13 @@ class ToolGroupComponent extends Container {
 			safeFgAnsi(getGlobalPiTheme() as Theme, "muted") ?? "\x1b[38;2;160;160;160m";
 		const phrase = formatCalledToolsPhrase(this.tools);
 		const statusBits = formatCollapsedStatusBits(counts);
-		// Settled success groups match CC (no status dot). Pending/error keep a light.
-		const showLight = overall !== "success" || status.pending > 0;
+		// Compact groups never flash a transient status dot. Pending/error state
+		// stays visible in prose (`1 running`, `1 failed`) without changing shape.
 		const mutedPhrase = `${CALL_GROUP_FG}${phrase}${TRANSPARENT_RESET}`;
 		const body = statusBits
 			? `${mutedPhrase}${TRANSPARENT_RESET} · ${statusBits}`
 			: mutedPhrase;
-		const line = showLight ? ` ${light} ${body}` : ` ${body}`;
-		const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
+		const lines = [" ".repeat(safeWidth), clampLineWidth(` ${body}`, safeWidth)];
 
 		// Final clamp already applied per-line above; avoid a second full pass.
 		if (canCache) {
@@ -1207,6 +1205,16 @@ function isToolGroupComponent(value: unknown): value is ToolGroupComponent {
 function isIgnorableToolSeparator(value: unknown): boolean {
 	if (value instanceof Spacer) return true;
 	if (value instanceof AssistantMessageComponent) {
+		const message = (value as any).lastMessage;
+		if (Array.isArray(message?.content)) {
+			// Sequential tool calls create a fresh assistant component containing
+			// thinking + toolCall blocks. cc-my-pi hides that thinking chrome, so it
+			// must not split one visual tool group. Actual assistant text remains a
+			// hard boundary and preserves message ordering.
+			return !message.content.some(
+				(block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim(),
+			);
+		}
 		const contentChildren = (value as any).contentContainer?.children;
 		return Array.isArray(contentChildren) && contentChildren.length === 0;
 	}
@@ -1214,13 +1222,9 @@ function isIgnorableToolSeparator(value: unknown): boolean {
 }
 
 function findPreviousToolSibling(children: any[], startIndex: number): { child: any; index: number } | undefined {
-	let skippedSeparators = 0;
 	for (let index = startIndex; index >= 0; index--) {
 		const child = children[index];
-		if (isIgnorableToolSeparator(child) && skippedSeparators < 3) {
-			skippedSeparators++;
-			continue;
-		}
+		if (isIgnorableToolSeparator(child)) continue;
 		return { child, index };
 	}
 	return undefined;
@@ -1273,14 +1277,22 @@ function maybeGroupToolComponent(parent: any, component: any): void {
 
 function patchContainerParentTracking(): void {
 	const proto = Container.prototype as any;
-	if (proto[PARENT_TRACKING_PATCH_FLAG]) return;
+
+	// `/reload` keeps pi-tui prototypes alive but reloads this module and its
+	// ToolExecutionComponent class identity. Never leave grouping captured in an
+	// old closure: update a shared hook every load, while installing one stable
+	// dispatcher around whichever legacy patch is already present.
+	proto[PARENT_TRACKING_GROUP_HOOK] = maybeGroupToolComponent;
+	if (proto[PARENT_TRACKING_DISPATCH_FLAG]) return;
+
 	const originalAddChild = proto.addChild;
 	const originalRemoveChild = proto.removeChild;
 	const originalClear = proto.clear;
 	proto.addChild = function patchedAddChild(component: any) {
 		const result = originalAddChild.call(this, component);
 		if (component && typeof component === "object") component[COMPONENT_PARENT] = this;
-		maybeGroupToolComponent(this, component);
+		const groupHook = proto[PARENT_TRACKING_GROUP_HOOK];
+		if (typeof groupHook === "function") groupHook(this, component);
 		return result;
 	};
 	proto.removeChild = function patchedRemoveChild(component: any) {
@@ -1295,6 +1307,7 @@ function patchContainerParentTracking(): void {
 		return originalClear.call(this);
 	};
 	proto[PARENT_TRACKING_PATCH_FLAG] = true;
+	proto[PARENT_TRACKING_DISPATCH_FLAG] = true;
 }
 
 function formatTodoOverlayLines(lines: string[], width: number): string[] {
@@ -2667,6 +2680,8 @@ function patchPromptEditorRender(): void {
 				truncateToWidth,
 				safeFgAnsi(getGlobalPiTheme() as any, "bashMode") ?? BORDER_COLOR,
 			),
+		(line, paddingX, width) =>
+			indentEditorContinuationLine(line, paddingX, width, truncateToWidth),
 	);
 }
 
@@ -2701,15 +2716,24 @@ function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
 				const alreadyDecorated =
 					plainLine1.startsWith("❯") || (plainLine1.startsWith("! ") && rawLine1.startsWith("\x1b"));
 				if (alreadyDecorated) return lines;
+				const paddingX = (editor as any).getPaddingX?.() ?? 0;
 				lines[1] = prefixEditorPromptLine(
 					rawLine1,
-					(editor as any).getPaddingX?.() ?? 0,
+					paddingX,
 					width,
 					BORDER_COLOR,
 					RESET,
 					truncateToWidth,
 					safeFgAnsi(getGlobalPiTheme() as any, "bashMode") ?? BORDER_COLOR,
 				);
+				for (let index = 2; index < lines.length - 1; index++) {
+					lines[index] = indentEditorContinuationLine(
+						lines[index] ?? "",
+						paddingX,
+						width,
+						truncateToWidth,
+					);
+				}
 				return lines;
 			};
 			return editor;

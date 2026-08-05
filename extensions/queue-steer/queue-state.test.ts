@@ -148,6 +148,10 @@ class MockEditor {
 
 	handleInput(_data: string): void {}
 
+	addNewLine(): void {
+		this.setText(`${this.text}\n`);
+	}
+
 	render(width: number): string[] {
 		const border = "─".repeat(width);
 		return [border, this.text.slice(0, width).padEnd(width), border];
@@ -272,6 +276,19 @@ function renderWidget(harness: ReturnType<typeof createHarness>, width = 76): st
 	const component = widgetFactory({}, { fg: (_color: string, text: string) => text });
 	return component.render(width).join("\n");
 }
+
+test("Shift+Enter inserts a newline instead of reaching follow-up handling", async () => {
+	const harness = createHarness();
+	await harness.emit("session_start");
+	harness.editor.setText("first line");
+
+	for (const sequence of ["\x1b\r", "\x1b[13;2u", "\x1b[13;2~", "\x1b[27;2;13~"]) {
+		harness.editor.handleInput(sequence);
+	}
+
+	assert.equal(harness.editor.getText(), "first line\n\n\n\n");
+	assert.equal(harness.sent.length, 0);
+});
 
 test("renders stacked lane boxes with steering above follow-ups", async () => {
 	const harness = createHarness();

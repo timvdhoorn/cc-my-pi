@@ -95,6 +95,31 @@ test("decorates editor subclasses without replacing image-paste behavior", () =>
   assert.match(editor.render(16)[1]!, /^❯ text/);
 });
 
+test("aligns multiline composer rows beneath text after the chevron", () => {
+  class Editor {
+    render(_width: number): string[] {
+      return ["────────────────", " first", " second", " third", " fourth", " fifth", "────────────────"];
+    }
+    getPaddingX(): number {
+      return 1;
+    }
+  }
+  patchEditorPromptRender(
+    Editor,
+    Symbol("multiline-prompt-render-test"),
+    (line, paddingX) => prefixEditorPromptLine(line, paddingX, 16, "", "", (value) => value),
+  );
+
+  const lines = new Editor().render(16);
+  assert.deepEqual(lines.slice(1, -1), [
+    "❯ first",
+    "  second",
+    "  third",
+    "  fourth",
+    "  fifth",
+  ]);
+});
+
 test("adds a Claude chevron to the live editor row", () => {
   const line = prefixEditorPromptLine(
     " text             ",
