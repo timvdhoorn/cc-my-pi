@@ -1188,7 +1188,7 @@ class ToolGroupComponent extends Container {
 			this.cachedExpanded = this.expanded;
 			this.cachedBlinkPhase = true;
 			this.cachedStatusKey = status.key;
-			this.cachedToolCount = total;
+			this.cachedToolCount = this.tools.length;
 			this.cachedLines = lines;
 		} else {
 			this.clearRenderCache();
