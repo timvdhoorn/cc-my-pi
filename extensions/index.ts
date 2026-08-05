@@ -627,6 +627,16 @@ function setToolGroupingEnabled(enabled: boolean): void {
 	writeSettingsKey("groupToolCalls", enabled);
 }
 
+/**
+ * When grouping is on, keep tools to a single title line unless the user
+ * expanded (ctrl+o). Stops the flash of full live bash → collapse into a
+ * group summary once a second tool arrives.
+ */
+function preferDenseToolChrome(expanded: boolean): boolean {
+	if (expanded) return false;
+	return toolGroupingEnabled();
+}
+
 type ToolStatus = "pending" | "success" | "error";
 
 function getToolStatusForGroup(tool: any): ToolStatus {
@@ -3134,6 +3144,9 @@ function clearPreservedBashPreviews(): void {
 }
 
 function shouldPreserveBashPreview(ctx: any): boolean {
+	// Grouping/dense chrome already collapses completed bash to one line — keeping
+	a multi-line tail would flash large then shrink when the next tool groups in.
+	if (toolGroupingEnabled()) return false;
 	return typeof ctx?.toolCallId === "string" && PRESERVED_BASH_PREVIEWS.has(ctx.toolCallId);
 }
 
@@ -5792,6 +5805,12 @@ function runningPreviewBlock(
 	// Line count lives on the tool heading (via liveLineCountTrailing); keep it in
 	// renderer state so the next renderCall pass can pick it up.
 	if (ctx?.state) ctx.state._liveLineCount = totalLineCount;
+
+	// Dense/grouped mode: never stream multi-line live bodies under the title.
+	// Line count stays on the heading via liveLineCountTrailing; expand for body.
+	if (preferDenseToolChrome(expanded)) {
+		return "";
+	}
 
 	if (!liveToolPreviewEnabled() || limit <= 0 || totalLineCount === 0) {
 		// No status row — the blinking ● on the header is the only running indicator.

@@ -7,6 +7,7 @@
 
 ### Changed
 
+- **Stable dense tools** — with grouping on, live multi-line bash tails stay off until expand, so tools no longer flash full then collapse into a group line.
 - **Denser tool groups** — collapsed same-tool runs show `Bash ×3 · preview` (mixed: `4 tools · Bash ×2 · Skill`); full ├/└ tree only when expanded (ctrl+o).
 - **Faster Pi startup** — optional companions (statusline/Effect git-info, queue-steer,
   header, esc/image paste, …) load in parallel during the factory instead of on the
