@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-08-06
+
+### Changed
+
+- **Release workflow** — added repository deployment pipeline configuration and guided deploy skill with mandatory GitHub tags/releases.
+
 ## [1.3.1] - 2026-08-06
 
 ### Added
