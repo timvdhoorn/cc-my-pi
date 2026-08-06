@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-08-06
+
+### Fixed
+
+- **Pi v0.84 compatibility** — migrated streaming handlers to delta-only `message_update` events, finalized thinking metadata from authoritative `message_end` payloads, and prevented delayed editor hooks from accessing stale contexts after reload.
+
+### Changed
+
+- **Pi development baseline** — updated Pi development dependencies to v0.84 and added regression coverage for delta-only events and reload lifecycle safety.
+
 ## [1.3.2] - 2026-08-06
 
 ### Changed
