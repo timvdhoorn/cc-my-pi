@@ -615,6 +615,21 @@ export default function (pi: ExtensionAPI) {
 	let turnActive = false;
 	let lastWorkingMessage: string | null = null;
 	let activeCtx: { ui: any; hasUI: boolean } | null = null;
+	const activeTools = new Map<string, string>();
+	let startupProgress = false;
+
+	function toolLabel(toolName: unknown): string {
+		if (toolName === "read") return "Reading";
+		if (toolName === "bash") return "Running";
+		return "Working";
+	}
+
+	function activitySuffix(): string {
+		const counts = new Map<string, number>();
+		for (const name of activeTools.values()) counts.set(name, (counts.get(name) ?? 0) + 1);
+		const parts = [...counts].map(([name, count]) => `${name} ${count} ${name === "Reading" ? "file" : name === "Running" ? "shell command" : "tool"}${count === 1 ? "" : "s"}`);
+		return parts.length > 0 ? parts.join(", ") : startupProgress ? "Loading context" : "";
+	}
 
 	function getEffortSuffix(): string {
 		try {
@@ -641,6 +656,8 @@ export default function (pi: ExtensionAPI) {
 		if (elapsed >= SHOW_TIMER_AFTER_MS || tokenCount > 0) {
 			statusParts.push(formatDuration(elapsed));
 		}
+		const activity = activitySuffix();
+		if (activity) statusParts.unshift(activity);
 
 		let message = `${CLAUDE_ORANGE}${currentVerb}…${RESET}`;
 		message += statusText(` (${statusParts.join(" · ")})`);
@@ -797,9 +814,33 @@ export default function (pi: ExtensionAPI) {
 		if (!agentStartTime) agentStartTime = Date.now();
 	});
 
+	pi.on("session_start", async (_event, ctx) => {
+		activeCtx = ctx;
+		startupProgress = true;
+		if (ctx.hasUI) {
+			try { ctx.ui.setWorkingMessage(`${CLAUDE_ORANGE}Loading…${RESET}${statusText(" (Reading 1 file, Loading context)")}`); } catch { /* noop */ }
+		}
+	});
+
+	pi.on("tool_execution_start", async (event, ctx) => {
+		activeCtx = ctx;
+		const id = String((event as any)?.toolCallId ?? `${Date.now()}-${activeTools.size}`);
+		activeTools.set(id, toolLabel((event as any)?.toolName));
+		startupProgress = false;
+		if (turnActive) syncWorkingMessage(true);
+	});
+
+	pi.on("tool_execution_end", async (event, ctx) => {
+		activeCtx = ctx;
+		const id = String((event as any)?.toolCallId ?? "");
+		if (id) activeTools.delete(id);
+		if (turnActive) syncWorkingMessage(true);
+	});
+
 	pi.on("turn_start", async (_event, ctx) => {
 		activeTurnId++;
 		turnActive = true;
+		startupProgress = false;
 		activeCtx = ctx;
 		applyThemeColors(ctx.ui?.theme);
 		turnStartTime = Date.now();
@@ -867,6 +908,8 @@ export default function (pi: ExtensionAPI) {
 	pi.on("turn_end", async (_event, ctx) => {
 		turnActive = false;
 		activeCtx = ctx;
+		activeTools.clear();
+		startupProgress = false;
 		applyThemeColors(ctx.ui?.theme);
 		const turnId = activeTurnId;
 		const elapsed = Date.now() - (agentStartTime || turnStartTime);
