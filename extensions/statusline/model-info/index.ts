@@ -138,8 +138,6 @@ export default function modelInfo(pi: ExtensionAPI) {
   });
 
   pi.on("message_update", (event) => {
-    if (event.message.role !== "assistant") return;
-
     const streamEvent = event.assistantMessageEvent;
     if (streamEvent.type === "toolcall_delta") {
       sawToolCall = true;
