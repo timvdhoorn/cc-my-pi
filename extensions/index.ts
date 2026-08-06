@@ -2286,6 +2286,18 @@ function formatSubagentNotification(lines: string[], width: number): string[] {
 const SHIFT_ENTER_NEWLINE_FEATURE = "cc-shift-enter-newline";
 /** Only on the outermost factory we own — not copied when others wrap us. */
 const SHIFT_ENTER_OUTER = Symbol.for("cc-my-pi:shift-enter-outer");
+const SHIFT_ENTER_INSTALL_GENERATION = Symbol.for("cc-my-pi:shift-enter-install-generation");
+
+function nextShiftEnterInstallGeneration(): number {
+	const current = (globalThis as any)[SHIFT_ENTER_INSTALL_GENERATION];
+	const generation = typeof current === "number" ? current + 1 : 1;
+	(globalThis as any)[SHIFT_ENTER_INSTALL_GENERATION] = generation;
+	return generation;
+}
+
+function isCurrentShiftEnterInstallGeneration(generation: number): boolean {
+	return (globalThis as any)[SHIFT_ENTER_INSTALL_GENERATION] === generation;
+}
 
 /** True when input should insert a newline, not submit/follow-up. */
 function isShiftEnterNewlineData(data: string, keybindings?: { matches?: (d: string, id: string) => boolean }): boolean {
@@ -2357,7 +2369,17 @@ function insertEditorNewline(editor: any, tui?: any): boolean {
  * pi-paster) wrap/replace after us. Skip only when *we* are already the outer factory
  * (OUTER symbol). Do NOT skip merely because our feature appears mid-chain.
  */
-function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
+export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
+	let installGeneration = nextShiftEnterInstallGeneration();
+	const installTimers = new Set<ReturnType<typeof setTimeout>>();
+
+	const cancelPendingInstalls = (): number => {
+		installGeneration = nextShiftEnterInstallGeneration();
+		for (const timer of installTimers) clearTimeout(timer);
+		installTimers.clear();
+		return installGeneration;
+	};
+
 	const install = (ctx: any): void => {
 		if (ctx.mode !== "tui") return;
 		const previous = ctx.ui.getEditorComponent();
@@ -2387,10 +2409,27 @@ function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 	};
 
 	const installLate = (ctx: any): void => {
-		// Aggressive re-assert outermost after paster/queue-steer compose.
+		// Aggressive re-assert outermost after paster/queue-steer compose. A newer
+		// lifecycle callback invalidates every closure that captured its old ctx.
+		const generation = cancelPendingInstalls();
 		for (const ms of [0, 0, 50, 100, 250, 500, 1000, 2000]) {
-			if (ms === 0) queueMicrotask(() => install(ctx));
-			else setTimeout(() => install(ctx), ms);
+			if (ms === 0) {
+				queueMicrotask(() => {
+					if (
+						generation === installGeneration &&
+						isCurrentShiftEnterInstallGeneration(generation)
+					) install(ctx);
+				});
+				continue;
+			}
+			const timer = setTimeout(() => {
+				installTimers.delete(timer);
+				if (
+					generation === installGeneration &&
+					isCurrentShiftEnterInstallGeneration(generation)
+				) install(ctx);
+			}, ms);
+			installTimers.add(timer);
 		}
 		install(ctx);
 	};
@@ -3146,6 +3185,13 @@ function clearPreservedBashPreviews(): void {
 	for (const invalidate of invalidators) {
 		try { invalidate(); } catch { /* noop */ }
 	}
+}
+
+export function hasNonEmptyAssistantTextDelta(event: any): boolean {
+	const streamEvent = event?.assistantMessageEvent;
+	return streamEvent?.type === "text_delta" &&
+		typeof streamEvent.delta === "string" &&
+		streamEvent.delta.trim().length > 0;
 }
 
 function shouldPreserveBashPreview(ctx: any): boolean {
@@ -5451,52 +5497,42 @@ function prefixThinkingLine(text: string, _theme: Theme | undefined): string {
 	return `Thinking: ${normalized}`;
 }
 
-function trackThinkingBlockEvents(event: any, ctx?: any): void {
+export function trackThinkingBlockEvents(event: any, ctx?: any, now = Date.now()): void {
 	const evt = event?.assistantMessageEvent;
-	const message = event?.message;
 	if (!evt || typeof evt.type !== "string") return;
 	function refreshThinkingChrome(): void {
 		try {
 			ctx?.ui?.invalidate?.();
 			ctx?.ui?.requestRender?.();
 		} catch { /* noop */ }
-		// Pi may call AssistantMessageComponent.updateContent before extension
-		// handlers run on the same thinking_end event — nudge one more frame.
-		setTimeout(() => {
-			try {
-				ctx?.ui?.invalidate?.();
-				ctx?.ui?.requestRender?.();
-			} catch { /* noop */ }
-		}, 0);
 	}
 
 	if (evt.type === "thinking_start") {
 		thinkingBlockInFlight = true;
-		thinkingBlockStartMs = Date.now();
+		thinkingBlockStartMs = now;
 		lastThinkingBlockDurationMs = undefined;
-		if (message?.role === "assistant") {
-			(message as any)[THINKING_ACTIVE_KEY] = true;
-			delete (message as any)[THINKING_DURATION_KEY];
-		}
 		refreshThinkingChrome();
 		return;
 	}
 	if (evt.type === "thinking_end") {
 		thinkingBlockInFlight = false;
-		const duration = Date.now() - thinkingBlockStartMs;
-		if (message?.role === "assistant") delete (message as any)[THINKING_ACTIVE_KEY];
-		if (duration >= MIN_THINKING_SUMMARY_MS) {
-			lastThinkingBlockDurationMs = duration;
-			if (message?.role === "assistant") (message as any)[THINKING_DURATION_KEY] = duration;
-		} else {
-			lastThinkingBlockDurationMs = undefined;
-			if (message?.role === "assistant") delete (message as any)[THINKING_DURATION_KEY];
-		}
+		const duration = now - thinkingBlockStartMs;
+		lastThinkingBlockDurationMs = duration >= MIN_THINKING_SUMMARY_MS ? duration : undefined;
 		refreshThinkingChrome();
 	}
 }
 
-function registerThinkingLabels(pi: ExtensionAPI): void {
+export function applyThinkingBlockMetadata(message: any): void {
+	if (message?.role !== "assistant") return;
+	delete message[THINKING_ACTIVE_KEY];
+	if (typeof lastThinkingBlockDurationMs === "number") {
+		message[THINKING_DURATION_KEY] = lastThinkingBlockDurationMs;
+	} else {
+		delete message[THINKING_DURATION_KEY];
+	}
+}
+
+export function registerThinkingLabels(pi: ExtensionAPI): void {
 	const patchMessage = (event: any, theme?: Theme) => {
 		// Keep theme-derived border / dim text colors in sync with the
 		// active pi theme. Cheap when the theme hasn't changed (identity check).
@@ -5541,14 +5577,11 @@ function registerThinkingLabels(pi: ExtensionAPI): void {
 	});
 	pi.on("message_update", async (event, ctx) => {
 		trackThinkingBlockEvents(event, ctx);
-		patchMessage(event, ctx.ui?.theme);
 	});
 	pi.on("message_end", async (event, ctx) => {
 		const message = (event as any)?.message;
 		if (message?.role === "assistant") {
-			if (typeof lastThinkingBlockDurationMs === "number") {
-				(message as any)[THINKING_DURATION_KEY] = lastThinkingBlockDurationMs;
-			}
+			applyThinkingBlockMetadata(message);
 			const started = typeof currentAgentWorkStartMs === "number"
 				? currentAgentWorkStartMs
 				: typeof (message as any)[WORKED_START_KEY] === "number"
@@ -7375,9 +7408,7 @@ export default async function (pi: ExtensionAPI) {
 	});
 
 	pi.on("message_update", async (event) => {
-		const content = (event as any)?.message?.content;
-		const hasText = Array.isArray(content) && content.some((block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim().length > 0);
-		if (hasText) clearPreservedBashPreviews();
+		if (hasNonEmptyAssistantTextDelta(event)) clearPreservedBashPreviews();
 	});
 
 	pi.on("tool_execution_start", async (event) => {
