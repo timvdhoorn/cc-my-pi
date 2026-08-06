@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-06
+
+### Added
+
+- **Activity progress** — startup and live tool status now show active reads and shell commands, including counts such as `Reading 1 file` and `Running 1 shell command`.
+
 ## [1.3.0] - 2026-08-05
 
 ### Added
