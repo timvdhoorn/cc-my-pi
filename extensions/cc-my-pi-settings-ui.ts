@@ -1,7 +1,10 @@
 /**
  * Interactive /cc-my-pi settings overlay with live ASCII previews.
  */
-import { getSettingsListTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	getSettingsListTheme,
+	type Theme,
+} from "@earendil-works/pi-coding-agent";
 import {
 	SettingsList,
 	getKeybindings,
@@ -87,8 +90,8 @@ export const SETTING_ORDER: Array<{
 		current: (s) => (s.groupToolCalls ? "on" : "off"),
 		describe: (s) =>
 			s.groupToolCalls
-				? 'Claude-style prose: "Called Bash 3 times" — no command dump'
-				: "Each tool is a full separate row",
+				? "Collapse adjacent calls into compact activity prose"
+				: "Claude-style call row with an indented result block",
 	},
 	{
 		id: "groupToolCallsAcrossTurns",
@@ -235,7 +238,15 @@ export const SETTING_ORDER: Array<{
 	{
 		id: "spinnerVerbColor",
 		label: "Spinner verb",
-		values: ["borderAccent", "accent", "success", "warning", "thinkingHigh", "mdHeading", "muted"],
+		values: [
+			"borderAccent",
+			"accent",
+			"success",
+			"warning",
+			"thinkingHigh",
+			"mdHeading",
+			"muted",
+		],
 		current: (s) => s.spinnerVerbColor,
 		describe: (s) =>
 			s.spinnerVerbColor === "borderAccent"
@@ -356,9 +367,13 @@ export const SETTING_ORDER: Array<{
 ];
 
 /** Core settings (everything except companion-package rows). */
-export const CORE_STEPS = SETTING_ORDER.filter((d) => !String(d.id).startsWith("companion:"));
+export const CORE_STEPS = SETTING_ORDER.filter(
+	(d) => !String(d.id).startsWith("companion:"),
+);
 /** Optional companion-package rows only. */
-export const COMPANION_STEPS = SETTING_ORDER.filter((d) => String(d.id).startsWith("companion:"));
+export const COMPANION_STEPS = SETTING_ORDER.filter((d) =>
+	String(d.id).startsWith("companion:"),
+);
 
 function boolLabel(on: boolean): string {
 	return on ? "on" : "off";
@@ -436,7 +451,11 @@ function readBodyLines(snap: CcToolsUiSnapshot, p: Paint): string[] {
 	return lines;
 }
 
-function bashBodyLines(snap: CcToolsUiSnapshot, p: Paint, opts?: { running?: boolean }): string[] {
+function bashBodyLines(
+	snap: CcToolsUiSnapshot,
+	p: Paint,
+	opts?: { running?: boolean },
+): string[] {
 	if (opts?.running) {
 		// Live-running mock — only meaningful when liveToolPreview is on.
 		if (!snap.liveToolPreview) {
@@ -464,7 +483,12 @@ function bashBodyLines(snap: CcToolsUiSnapshot, p: Paint, opts?: { running?: boo
 }
 
 /** Wrap tool body according to toolBackground style. */
-function frameBody(snap: CcToolsUiSnapshot, p: Paint, body: string[], indent = ""): string[] {
+function frameBody(
+	snap: CcToolsUiSnapshot,
+	p: Paint,
+	body: string[],
+	indent = "",
+): string[] {
 	if (body.length === 0) return [];
 	if (snap.toolBackground === "outlines") {
 		// When already under a group branch (`│ `), skip an extra pipe so we don't
@@ -479,7 +503,9 @@ function frameBody(snap: CcToolsUiSnapshot, p: Paint, body: string[], indent = "
 		const inner = 34;
 		const out = [indent + p.muted("╭" + "─".repeat(inner + 2) + "╮")];
 		for (const line of body) {
-			out.push(`${indent}${p.muted("│")} ${padVisible(line, inner)} ${p.muted("│")}`);
+			out.push(
+				`${indent}${p.muted("│")} ${padVisible(line, inner)} ${p.muted("│")}`,
+			);
 		}
 		out.push(indent + p.muted("╰" + "─".repeat(inner + 2) + "╯"));
 		return out;
@@ -496,25 +522,49 @@ function paintStandaloneTool(
 	summary: string,
 	body: string[],
 ): void {
-	lines.push(`${p.ok("●")} ${p.title(name)}  ${p.accent(summary)}`);
+	lines.push(`${p.ok("●")} ${p.title(name)}(${p.accent(summary)})`);
 	lines.push(...frameBody(snap, p, body));
 }
 
-function paintGrouped(lines: string[], snap: CcToolsUiSnapshot, p: Paint): void {
+function paintGrouped(
+	lines: string[],
+	snap: CcToolsUiSnapshot,
+	p: Paint,
+): void {
 	// Claude Code prose — no commands, no tree.
 	lines.push(p.muted("Called Bash 3 times"));
 	lines.push(p.muted("Called Bash 2 times, Skill, Grep"));
 	if (snap.liveToolPreview) {
 		lines.push("");
 		lines.push(p.dim("while running:"));
-		lines.push(`${p.warn("●")} ${p.muted("Called Bash 2 times")} ${p.muted("·")} ${p.warn("1 running")}`);
+		lines.push(
+			`${p.warn("●")} ${p.muted("Called Bash 2 times")} ${p.muted("·")} ${p.warn("1 running")}`,
+		);
 	}
 }
 
-function paintUngrouped(lines: string[], snap: CcToolsUiSnapshot, p: Paint): void {
-	paintStandaloneTool(lines, snap, p, "Read", "src/auth.ts", readBodyLines(snap, p));
+function paintUngrouped(
+	lines: string[],
+	snap: CcToolsUiSnapshot,
+	p: Paint,
+): void {
+	paintStandaloneTool(
+		lines,
+		snap,
+		p,
+		"Read",
+		"src/auth.ts",
+		readBodyLines(snap, p),
+	);
 	lines.push("");
-	paintStandaloneTool(lines, snap, p, "Bash", "npm test", bashBodyLines(snap, p));
+	paintStandaloneTool(
+		lines,
+		snap,
+		p,
+		"Bash",
+		"npm test",
+		bashBodyLines(snap, p),
+	);
 
 	if (snap.liveToolPreview) {
 		lines.push("");
@@ -531,7 +581,11 @@ function paintUngrouped(lines: string[], snap: CcToolsUiSnapshot, p: Paint): voi
 }
 
 /** ASCII mock of the tool chrome for the current snapshot. */
-export function buildCcToolsPreview(snap: CcToolsUiSnapshot, theme: Theme, focusId?: string): string[] {
+export function buildCcToolsPreview(
+	snap: CcToolsUiSnapshot,
+	theme: Theme,
+	focusId?: string,
+): string[] {
 	const p = makePaint(theme, snap);
 	const lines: string[] = [];
 
@@ -539,7 +593,9 @@ export function buildCcToolsPreview(snap: CcToolsUiSnapshot, theme: Theme, focus
 	if (focusId) {
 		const focused = SETTING_ORDER.find((s) => s.id === focusId);
 		if (focused) {
-			lines.push(p.accent(`changed: ${focused.label} → ${focused.current(snap)}`));
+			lines.push(
+				p.accent(`changed: ${focused.label} → ${focused.current(snap)}`),
+			);
 			lines.push(p.dim(focused.describe(snap)));
 		}
 	}
@@ -611,7 +667,12 @@ export async function openCcToolsSettingsPanel(
 	}
 
 	await ctx.ui.custom(
-		(_tui: unknown, theme: Theme, _kb: unknown, done: (value?: undefined) => void) => {
+		(
+			_tui: unknown,
+			theme: Theme,
+			_kb: unknown,
+			done: (value?: undefined) => void,
+		) => {
 			let snap = controller.getSnapshot();
 			let lastChangedId: string | undefined;
 			// Stable item objects so SettingsList keeps selection across value changes.
@@ -648,12 +709,16 @@ export async function openCcToolsSettingsPanel(
 					? (listAny.filteredItems as SettingItem[])
 					: items;
 				if (!displayItems.length) return false;
-				const idx = Math.max(0, Math.min(Number(listAny.selectedIndex) || 0, displayItems.length - 1));
+				const idx = Math.max(
+					0,
+					Math.min(Number(listAny.selectedIndex) || 0, displayItems.length - 1),
+				);
 				const item = displayItems[idx];
 				if (!item?.values?.length) return false;
 				const cur = item.values.indexOf(item.currentValue);
 				const base = cur >= 0 ? cur : 0;
-				const next = (base + direction + item.values.length) % item.values.length;
+				const next =
+					(base + direction + item.values.length) % item.values.length;
 				const newValue = item.values[next]!;
 				item.currentValue = newValue;
 				applyValue(item.id, newValue);
@@ -699,7 +764,11 @@ export async function openCcToolsSettingsPanel(
 					if (cacheLines && cacheWidth === width) return cacheLines;
 
 					const header = [
-						safeFg(theme, "accent", theme.bold?.("cc-my-pi settings") ?? "cc-my-pi settings") +
+						safeFg(
+							theme,
+							"accent",
+							theme.bold?.("cc-my-pi settings") ?? "cc-my-pi settings",
+						) +
 							safeFg(
 								theme,
 								"muted",
@@ -719,7 +788,13 @@ export async function openCcToolsSettingsPanel(
 					];
 					const previewLines = buildCcToolsPreview(snap, theme, lastChangedId);
 
-					const out = [...header, ...listLines, ...gap, ...hint, ...previewLines];
+					const out = [
+						...header,
+						...listLines,
+						...gap,
+						...hint,
+						...previewLines,
+					];
 					cacheWidth = width;
 					cacheLines = out;
 					return out;
@@ -768,7 +843,10 @@ function truncateLine(text: string, width: number): string {
  * (e.g. a `#d77757` set via `/cc-my-pi spinner verb`). Cycling then starts from
  * the user's actual value instead of silently overwriting it from index 0.
  */
-export function wizardStepValues(def: (typeof SETTING_ORDER)[number], snap: CcToolsUiSnapshot): string[] {
+export function wizardStepValues(
+	def: (typeof SETTING_ORDER)[number],
+	snap: CcToolsUiSnapshot,
+): string[] {
 	const cur = def.current(snap);
 	return def.values.includes(cur) ? def.values : [cur, ...def.values];
 }
@@ -796,7 +874,12 @@ export async function openCcToolsSetupWizard(
 	let outcome: SetupWizardOutcome = "completed";
 
 	await ctx.ui.custom(
-		(_tui: unknown, theme: Theme, _kb: unknown, done: (value?: undefined) => void) => {
+		(
+			_tui: unknown,
+			theme: Theme,
+			_kb: unknown,
+			done: (value?: undefined) => void,
+		) => {
 			let snap = controller.getSnapshot();
 			let phase: "intro" | "companions" | "steps" = "intro";
 			let mode: "standard" | "custom" = "standard";
@@ -853,7 +936,8 @@ export async function openCcToolsSetupWizard(
 				const cur = def.current(snap);
 				const idx = values.indexOf(cur);
 				const base = idx >= 0 ? idx : 0;
-				const next = values[(base + direction + values.length) % values.length]!;
+				const next =
+					values[(base + direction + values.length) % values.length]!;
 				controller.apply(def.id, next, ctx);
 				snap = controller.getSnapshot();
 				invalidateCache();
@@ -892,16 +976,41 @@ export async function openCcToolsSetupWizard(
 			const renderIntro = (width: number): string[] => {
 				const titleText = "cc-my-pi setup";
 				const opt = (on: boolean, text: string) =>
-					on ? safeFg(theme, "accent", `● ${text}`) : safeFg(theme, "dim", `  ${text}`);
+					on
+						? safeFg(theme, "accent", `● ${text}`)
+						: safeFg(theme, "dim", `  ${text}`);
 				const lines = [
 					safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText),
 					"",
-					safeFg(theme, "muted", truncateLine("Changes apply live and are saved to ~/.pi/settings.json.", width)),
+					safeFg(
+						theme,
+						"muted",
+						truncateLine(
+							"Changes apply live and are saved to ~/.pi/settings.json.",
+							width,
+						),
+					),
 					"",
-					opt(mode === "standard", truncateLine("standard — recommended defaults, only pick optional extensions", width)),
-					opt(mode === "custom", truncateLine("custom — walk through every setting", width)),
+					opt(
+						mode === "standard",
+						truncateLine(
+							"standard — recommended defaults, only pick optional extensions",
+							width,
+						),
+					),
+					opt(
+						mode === "custom",
+						truncateLine("custom — walk through every setting", width),
+					),
 					"",
-					safeFg(theme, "muted", truncateLine("←/→ choose · enter start · s skip for now · x don't ask again", width)),
+					safeFg(
+						theme,
+						"muted",
+						truncateLine(
+							"←/→ choose · enter start · s skip for now · x don't ask again",
+							width,
+						),
+					),
 				];
 				return padToHeight(lines, WIZARD_BODY_LINES);
 			};
@@ -910,7 +1019,14 @@ export async function openCcToolsSetupWizard(
 				const titleText = "cc-my-pi setup — optional extensions";
 				const lines: string[] = [
 					safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText),
-					safeFg(theme, "muted", truncateLine("↑/↓ move · space select · enter continue · b back", width)),
+					safeFg(
+						theme,
+						"muted",
+						truncateLine(
+							"↑/↓ move · space select · enter continue · b back",
+							width,
+						),
+					),
 					"",
 				];
 				COMPANION_PACKAGES.forEach((c, i) => {
@@ -918,11 +1034,21 @@ export async function openCcToolsSetupWizard(
 					const prefix = cursor ? "▸ " : "  ";
 					let row: string;
 					if (snap.companionsInstalled[c.source]) {
-						row = safeFg(theme, "dim", truncateLine(`${prefix}✓ ${c.name} — installed`, width));
+						row = safeFg(
+							theme,
+							"dim",
+							truncateLine(`${prefix}✓ ${c.name} — installed`, width),
+						);
 					} else {
 						const box = companionSelected.has(c.source) ? "[x]" : "[ ]";
-						const text = truncateLine(`${prefix}${box} ${c.name} — ${c.blurb}`, width);
-						row = companionSelected.has(c.source) || cursor ? safeFg(theme, "accent", text) : text;
+						const text = truncateLine(
+							`${prefix}${box} ${c.name} — ${c.blurb}`,
+							width,
+						);
+						row =
+							companionSelected.has(c.source) || cursor
+								? safeFg(theme, "accent", text)
+								: text;
 					}
 					lines.push(row);
 				});
@@ -932,15 +1058,34 @@ export async function openCcToolsSetupWizard(
 			const renderStep = (width: number): string[] => {
 				const def = steps[stepIndex]!;
 				const titleText = `cc-my-pi setup — step ${stepIndex + 1}/${steps.length}: ${def.label}`;
-				const title = safeFg(theme, "accent", theme.bold?.(titleText) ?? titleText);
-				const hints = safeFg(theme, "muted", "←/→ or space change · enter next · b back · esc finish");
+				const title = safeFg(
+					theme,
+					"accent",
+					theme.bold?.(titleText) ?? titleText,
+				);
+				const hints = safeFg(
+					theme,
+					"muted",
+					"←/→ or space change · enter next · b back · esc finish",
+				);
 				const cur = def.current(snap);
 				const values = wizardStepValues(def, snap);
 				const valueLine = values
-					.map((v) => (v === cur ? safeFg(theme, "accent", `● ${v}`) : safeFg(theme, "dim", `  ${v}`)))
+					.map((v) =>
+						v === cur
+							? safeFg(theme, "accent", `● ${v}`)
+							: safeFg(theme, "dim", `  ${v}`),
+					)
 					.join("   ");
-				const describe = safeFg(theme, "dim", truncateLine(def.describe(snap), width));
-				const header = padToHeight([title, hints, "", valueLine, describe, ""], WIZARD_HEADER_LINES);
+				const describe = safeFg(
+					theme,
+					"dim",
+					truncateLine(def.describe(snap), width),
+				);
+				const header = padToHeight(
+					[title, hints, "", valueLine, describe, ""],
+					WIZARD_HEADER_LINES,
+				);
 				const preview = padToHeight(
 					buildCcToolsPreview(snap, theme, def.id),
 					WIZARD_BODY_LINES - WIZARD_HEADER_LINES,
@@ -987,7 +1132,10 @@ export async function openCcToolsSetupWizard(
 							return;
 						}
 						if (kb.matches(data, "tui.editor.cursorDown") || data === "j") {
-							companionCursor = Math.min(COMPANION_PACKAGES.length - 1, companionCursor + 1);
+							companionCursor = Math.min(
+								COMPANION_PACKAGES.length - 1,
+								companionCursor + 1,
+							);
 							invalidateCache();
 							ctx.ui.requestRender?.();
 							return;
@@ -995,7 +1143,8 @@ export async function openCcToolsSetupWizard(
 						if (data === " ") {
 							const c = COMPANION_PACKAGES[companionCursor];
 							if (c && !snap.companionsInstalled[c.source]) {
-								if (companionSelected.has(c.source)) companionSelected.delete(c.source);
+								if (companionSelected.has(c.source))
+									companionSelected.delete(c.source);
 								else companionSelected.add(c.source);
 								invalidateCache();
 								ctx.ui.requestRender?.();
@@ -1012,9 +1161,16 @@ export async function openCcToolsSetupWizard(
 							for (const c of COMPANION_PACKAGES) {
 								if (!companionSelected.has(c.source)) continue;
 								try {
-									controller.apply(`companion:${c.source}`, COMPANION_INSTALL_VALUE, ctx);
+									controller.apply(
+										`companion:${c.source}`,
+										COMPANION_INSTALL_VALUE,
+										ctx,
+									);
 								} catch (err) {
-									ctx.ui?.notify?.(err instanceof Error ? err.message : String(err), "error");
+									ctx.ui?.notify?.(
+										err instanceof Error ? err.message : String(err),
+										"error",
+									);
 								}
 							}
 							snap = controller.getSnapshot();
@@ -1029,8 +1185,14 @@ export async function openCcToolsSetupWizard(
 						if (isCancel(data)) return finish("completed");
 						return;
 					}
-					if (kb.matches(data, "tui.editor.cursorLeft") || data === "h") return cycle(-1);
-					if (kb.matches(data, "tui.editor.cursorRight") || data === "l" || data === " ") return cycle(1);
+					if (kb.matches(data, "tui.editor.cursorLeft") || data === "h")
+						return cycle(-1);
+					if (
+						kb.matches(data, "tui.editor.cursorRight") ||
+						data === "l" ||
+						data === " "
+					)
+						return cycle(1);
 					if (data === "\r" || data === "\n") return advance();
 					if (data === "b") return back();
 					if (isCancel(data)) return finish("completed");

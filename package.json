@@ -1,6 +1,6 @@
 {
   "name": "cc-my-pi",
-  "version": "1.3.3",
+  "version": "1.4.0",
   "description": "cc-my-pi — Claude Code-style UI for Pi: grouped tool rows, Shiki diffs, spinner, themes, esc/queue steering, and a /cc-my-pi settings panel. Personal fork of FammasMaz/pi-cc-tools.",
   "keywords": [
     "pi-package",
@@ -30,6 +30,8 @@
   "files": [
     "extensions/index.ts",
     "extensions/spinner.ts",
+    "extensions/task-and-tool-presentation.ts",
+    "extensions/pi-tasks",
     "extensions/cc-my-pi-settings-ui.ts",
     "extensions/companion-packages.ts",
     "extensions/pi-agent-settings.ts",
@@ -64,7 +66,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit --allowImportingTsExtensions --target ES2022 --module NodeNext --moduleResolution NodeNext --skipLibCheck extensions/index.ts extensions/spinner.ts extensions/cc-my-pi-settings-ui.ts extensions/companion-packages.ts extensions/esc-steer.ts extensions/double-esc-clear.ts extensions/copy-command.ts extensions/queue-steer/index.ts extensions/claude-header/index.ts extensions/statusline/model-info/index.ts extensions/statusline/git-info/index.ts extensions/statusline/ui-customization/index.ts extensions/bash-execution-render.ts",
-    "test": "node --test --experimental-strip-types extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/companion-packages.test.ts extensions/copy-command.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts extensions/queue-steer/command-rows.test.ts extensions/claude-header/claude-header.test.ts extensions/claude-header/pi-mascot.test.ts extensions/claude-header/loaded-stats.test.ts extensions/pi-agent-settings.test.ts extensions/statusline/git-info/process.test.ts extensions/statusline/git-info/git-segment.test.ts extensions/statusline/git-info/refresh-coordinator.test.ts extensions/bash-execution-render.test.ts extensions/update-check.test.ts extensions/pi-v084-compat.test.ts extensions/statusline/model-info/model-info.test.ts",
+    "test": "node --test --experimental-strip-types extensions/pi-tasks/task-chat.test.ts extensions/task-and-tool-presentation.test.ts extensions/user-message.test.ts extensions/image-paster.test.ts extensions/spinner.test.ts extensions/esc-features.test.ts extensions/setup-wizard.test.ts extensions/companion-packages.test.ts extensions/copy-command.test.ts extensions/queue-steer/queue-state.test.ts extensions/queue-steer/editor-render.test.ts extensions/queue-steer/command-rows.test.ts extensions/claude-header/claude-header.test.ts extensions/claude-header/pi-mascot.test.ts extensions/claude-header/loaded-stats.test.ts extensions/pi-agent-settings.test.ts extensions/statusline/git-info/process.test.ts extensions/statusline/git-info/git-segment.test.ts extensions/statusline/git-info/refresh-coordinator.test.ts extensions/bash-execution-render.test.ts extensions/update-check.test.ts extensions/pi-v084-compat.test.ts extensions/statusline/model-info/model-info.test.ts",
     "pack:dry-run": "npm pack --dry-run",
     "publish:dry-run": "npm publish --dry-run",
     "bench:tools": "bun scripts/benchmark-tools.ts"
@@ -74,7 +76,9 @@
     "@shikijs/cli": "^4.0.2",
     "diff": "^9.0.0",
     "effect": "4.0.0-beta.98",
-    "pi-paster": "^0.2.3"
+    "pi-paster": "^0.2.3",
+    "shiki": "^4.4.1",
+    "typebox": "^1.1.34"
   },
   "overrides": {
     "brace-expansion": "5.0.9",

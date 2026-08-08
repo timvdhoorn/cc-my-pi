@@ -6,6 +6,19 @@ experience to [Pi](https://pi.dev), which works with any model.
 
 > Personal Pi UI bundle — Claude Code-inspired tool rendering, spinner, themes, and esc/queue steering. Fork of [pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`), heavily adapted. See [Credits & provenance](#credits--provenance).
 
+## What's new in v1.4.0
+
+- Tool calls now look more like Claude Code out of the box: one clear row per
+  call, with its result directly underneath.
+- Results and pasted-image context now share the same aligned `⎿` arm instead
+  of mixed tree connectors.
+- Running tools stay visually stable; flashing live-output previews are now
+  optional.
+- Task tracking is built in, and first-time setup can install recommended
+  companion extensions for you.
+- Context usage in the statusline stays accurate during long sessions and
+  model changes.
+
 Every module below is **optional and individually toggleable** — turn any of
 them off in settings and the rest keeps working. Core tool rendering (the
 Claude-style diffs, status dots, and borders) is the base module: it's on
@@ -25,7 +38,8 @@ closest to stock Pi.
    Or for development: clone this repo and add its absolute path to the
    `packages` array in `~/.pi/agent/settings.json`
    (`"packages": ["/path/to/Pi-config/cc-my-pi"]`).
-2. Run `/reload` (or restart Pi) to load it.
+2. Remove any standalone `npm:@tintinweb/pi-tasks` package entry; task tracking
+   is bundled and locally adapted by cc-my-pi. Then run `/reload` (or restart Pi).
 3. First load auto-starts the guided setup wizard (`/cc-my-pi setup`). Its
    intro asks whether you want the **standard** setup (recommended defaults,
    you only pick optional extensions) or **custom** (walk through every
@@ -55,7 +69,7 @@ Every subcommand hangs off the single root command `/cc-my-pi`:
 
 ## Screenshots
 
-**Tool rendering** — stable compact `Called …` groups across parallel and sequential tool turns
+**Tool rendering** — individual Claude-style call/result rows by default; compact groups remain optional
 
 ![Tool rendering](assets/screenshots/tool-rendering.png)
 
@@ -98,7 +112,7 @@ project override) as plain JSON keys — the panel and wizard just write to the
 same file.
 
 | Module | What you get | Setting | Default | Applies |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | Core tool rendering | Compact `read`/`bash`/`grep`/`find`/`ls`/`edit`/`write` rows, Claude-style OpenAI/`apply_patch` tools, minimal diff chrome, thinking labels, MCP-aware rendering | — (base module, always on while loaded) | on | — |
 | Spinner | Claude-style spinner verb + status text (falls back to Pi's stock spinner when off) | `spinnerEnabled` | `true` | reload |
 | Startup header | Boxed header (forked from `pi-claude-code-tui`) — Claude Code proportions: a narrow left column with an animated π mascot + model/effort/cwd, and a wide right column with a **Loaded** panel counting skills · prompts · extensions · mcp (with a global/project split) plus a `/loaded for details` hint; off falls back to the one-line `✻ Welcome to Pi` header | `claudeHeaderEnabled` | `true` | reload |
@@ -110,12 +124,13 @@ same file.
 | Esc steer | Esc while the agent runs aborts and auto-continues whatever was queued | `escSteerEnabled` | `true` | live |
 | Double-Esc clear | Double-Esc (within 800ms) on a non-empty idle draft clears it | `doubleEscClearEnabled` | `true` | live |
 | Queue steer | Vendored `pi-queue-steer` — visible steering/follow-up queue | `queueSteerEnabled` | `true` | live |
+| Task tracking | Vendored `@tintinweb/pi-tasks` — one persistent static list above the editor using `✓`/`□`; Task tool calls stay hidden from chat and display has no IDs, animation, runtime/token stats or truncation | — (always on) | on | reload |
 | Theme-adaptive palette | Borders, branch connectors, dim text, spinner accent, and diff backgrounds follow the active pi theme | `themeAdaptive` | `true` | live |
-| Grouped tool calls | Tool calls collapse under compact `Called …` prose | `groupToolCalls` | `true` | live |
+| Grouped tool calls | Opt-in compact activity prose instead of individual Claude-style call/result pairs | `groupToolCalls` | `false` | live |
 | Cross-turn tool groups | Extend groups across sequential hidden thinking-only assistant turns; set false for pre-1.3 same-turn-only grouping | `groupToolCallsAcrossTurns` | `true` | live (future groups) |
 | Compact group status dots | Show pre-1.3 green/pending dots before compact groups settle | `showCompactToolStatusDots` | `false` | live |
 | Multiline composer alignment | Every continuation row aligns beneath text after the `❯` prompt | — (always on) | on | — |
-| Live tool preview | A few output lines shown for still-running tool calls | `liveToolPreview` | `true` | live |
+| Live tool preview | Opt-in output tail for still-running calls; off keeps tool rows height-stable | `liveToolPreview` | `false` | live |
 | Statusline | Bundled footer module: model/ctx gauge, git segment (with the `+N −N` line diffstat), MCP status, and a thinking level color-coded to match the editor border. Sub-settings `statuslineCtxStyle` (context gauge style) and `statuslineShowWorktree` (`wt <name>` segment) apply live (≤5s) | `statuslineEnabled` (module on/off), `statuslineCtxStyle`, `statuslineShowWorktree` | `true`, `"claude"`, `true` | `statuslineEnabled` reload; sub-settings live (≤5s) |
 
 One example per module — set just the key(s) you want to change:
@@ -123,11 +138,13 @@ One example per module — set just the key(s) you want to change:
 ```json
 { "spinnerEnabled": false }
 ```
+
 Disables the Claude-style spinner; Pi's stock spinner takes over after `/reload`.
 
 ```json
 { "claudeHeaderEnabled": false }
 ```
+
 Falls back to the one-line `✻ Welcome to Pi` header after `/reload` (the animated
 boxed header is off). Don't install `npm:pi-claude-code-tui` alongside cc-my-pi —
 its header is already vendored here, and running both would draw two headers.
@@ -135,11 +152,13 @@ its header is already vendored here, and running both would draw two headers.
 ```json
 { "sessionCommandsEnabled": false }
 ```
+
 `/exit` and `/clear` are no longer registered after `/reload`.
 
 ```json
 { "copyCommandEnabled": false }
 ```
+
 `/copy-code` is no longer registered after `/reload`. When enabled, `/copy-code` copies
 the last assistant response to the clipboard. If that response contains fenced
 code blocks it first shows a **Select content to copy** picker — the full
@@ -150,32 +169,48 @@ Turn the picker back on with the `Copy picker` toggle in `/cc-my-pi settings`.
 ```json
 { "imagePasterEnabled": false }
 ```
+
 Clipboard/pasted images are no longer captured as attachments; reload to apply.
 
 ```json
 { "escSteerEnabled": false }
 ```
+
 Esc goes back to only pausing the run — no auto-continue of queued follow-ups.
 
 ```json
 { "doubleEscClearEnabled": false }
 ```
+
 Double-Esc on a non-empty draft no longer clears it.
 
 ```json
 { "queueSteerEnabled": false }
 ```
+
 Removes the visible steering/follow-up queue; Pi's native queue still works.
 
 ```json
 { "themeAdaptive": false }
 ```
+
 Keeps the fixed Claude-style palette regardless of the active pi theme.
 
-```json
-{ "groupToolCalls": false }
+Individual Claude-style call/result pairs are the default:
+
+```text
+● Read(extensions/index.ts)
+  ⎿ Read 120 lines
+
+● Bash(npm test)
+  ⎿ 42 tests passed
 ```
-Tool calls render as separate rows instead of a grouped block.
+
+Enable compact activity grouping explicitly:
+
+```json
+{ "groupToolCalls": true }
+```
 
 ```json
 {
@@ -183,6 +218,7 @@ Tool calls render as separate rows instead of a grouped block.
   "showCompactToolStatusDots": true
 }
 ```
+
 Restores the pre-1.3 tool-group details: same-turn-only groups and transient compact-group status dots. These settings are also available in `/cc-my-pi settings` and the custom setup wizard.
 
 ### 1.3 interaction examples
@@ -234,19 +270,22 @@ Called Bash 2 times, Read
 Called Bash 2 times, Read
 ```
 
+Transient output is hidden by default so tool rows do not flash between partial and final states. Enable it explicitly when a live tail is useful:
+
 ```json
-{ "liveToolPreview": false }
+{ "liveToolPreview": true }
 ```
-Still-running tool calls no longer show a live output preview.
 
 ```json
 { "statuslineEnabled": false }
 ```
+
 Disables the bundled statusline module (model/ctx gauge, git segment, MCP status); Pi's stock footer takes over after `/reload`.
 
 ```json
 { "statuslineCtxStyle": "plain", "statuslineShowWorktree": false }
 ```
+
 Statusline switches to a plain context style and drops the `wt <name>` worktree segment.
 
 ## Theme
@@ -292,11 +331,12 @@ not repeated here):
   "expandedPreviewMaxLines": 4000,
   "extraExpandedPreviewMaxLines": 12000,
   "extraToolOutputExpanded": false,
-  "groupToolCalls": true,
+  "groupToolCalls": false,
   "groupToolCallsAcrossTurns": true,
   "showCompactToolStatusDots": false,
   "bashOutputMode": "opencode",
   "bashCollapsedLines": 10,
+  "liveToolPreview": false,
   "liveToolPreviewLines": 5,
   "diffCollapsedLines": 24,
   "diffTheme": "github-dark"
@@ -320,11 +360,12 @@ not repeated here):
 | `expandedPreviewMaxLines` | `4000` | Max lines when expanded with Ctrl+O |
 | `extraExpandedPreviewMaxLines` | `12000` | Max lines after Ctrl+Shift+O extra-detail mode |
 | `extraToolOutputExpanded` | `false` | Start with Ctrl+Shift+O extra-detail mode enabled |
-| `groupToolCalls` | `true` | Collapse tool calls into compact prose groups |
+| `groupToolCalls` | `false` | Opt into compact activity groups instead of individual call/result pairs |
 | `groupToolCallsAcrossTurns` | `true` | Keep grouping across hidden thinking-only assistant turns |
 | `showCompactToolStatusDots` | `false` | Show legacy transient dots on pending compact groups |
 | `bashCollapsedLines` | `10` | Lines for collapsed bash output |
-| `liveToolPreviewLines` | `5` | Lines shown in the collapsed live preview |
+| `liveToolPreview` | `false` | Opt into a temporary output tail while a tool runs |
+| `liveToolPreviewLines` | `5` | Lines shown when live preview is enabled |
 | `diffCollapsedLines` | `24` | Diff lines before collapsing |
 
 Assistant Markdown unordered lists always render with `-` markers (Claude Code parity; not configurable).
@@ -450,8 +491,9 @@ Unknown/custom tools do not have a public global renderer hook in Pi, so this pa
 cc-my-pi is not an original work — it stands on these projects:
 
 | Component | Upstream | Author | License |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Core tool rendering, diffs, spinner, settings UI (base fork) | [FammasMaz/pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`) | FammasMaz | MIT |
+| `extensions/pi-tasks/` (vendored, adapted) | [tintinweb/pi-tasks](https://github.com/tintinweb/pi-tasks) v0.7.2 | tintinweb | MIT |
 | `extensions/queue-steer/` (vendored, adapted) | [tmustier/pi-queue-steer](https://github.com/tmustier/pi-queue-steer) | Thomas Mustier | MIT |
 | `extensions/esc-steer.ts` (vendored, adapted) | `pi-esc-steer` | Thomas Mustier | MIT |
 | `extensions/double-esc-clear.ts` (vendored, adapted) | [`@thisux/pi-double-esc-clear`](https://www.npmjs.com/package/@thisux/pi-double-esc-clear) v1.0.3 | [Sanju](https://sanju.sh/) | MIT |

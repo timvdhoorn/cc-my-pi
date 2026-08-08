@@ -7,11 +7,14 @@ check_cmd: npm run typecheck
 test_cmd: npm test
 install_cmd: npm install
 changelog_cmd: manual
+readme_whats_new: true
+github_release: true
+npm_publish: true
 lock_name: cc-my-pi-release
 
 ## Release pipeline
 
-Release runs through explicit CLI steps: annotated Git tag and push, GitHub Release creation, then public npm publication.
+Release runs through explicit CLI steps: update the plain-language latest-version README section, create an annotated Git tag and push, create the GitHub Release from the matching changelog section, then run `npm publish --access public` for `cc-my-pi`. Verify both remote versions before reporting success.
 
 ## Scoped commands
 

@@ -19,12 +19,31 @@ export interface CompanionPackage {
 }
 
 export const COMPANION_PACKAGES: CompanionPackage[] = [
-	{ name: "pi-context-view", source: "npm:pi-context-view", blurb: "Visualize context usage & inspect hidden injections" },
-	{ name: "pi-mcp-adapter", source: "npm:pi-mcp-adapter", blurb: "Use MCP servers (tools) inside Pi" },
-	{ name: "pi-subagents", source: "npm:pi-subagents", blurb: "Delegate tasks to subagents (chains, parallel)" },
-	{ name: "pi-dynamic-workflows", source: "npm:@quintinshaw/pi-dynamic-workflows", blurb: "Fan tasks out across subagents (/workflows, /deep-research)" },
-	{ name: "pi-tasks", source: "npm:@tintinweb/pi-tasks", blurb: "Claude Code-style task tracking and coordination" },
-	{ name: "rpiv-ask-user-question", source: "npm:@juicesharp/rpiv-ask-user-question", blurb: "Structured questions with typed options instead of guessing" },
+	{
+		name: "pi-context-view",
+		source: "npm:pi-context-view",
+		blurb: "Visualize context usage & inspect hidden injections",
+	},
+	{
+		name: "pi-mcp-adapter",
+		source: "npm:pi-mcp-adapter",
+		blurb: "Use MCP servers (tools) inside Pi",
+	},
+	{
+		name: "pi-subagents",
+		source: "npm:pi-subagents",
+		blurb: "Delegate tasks to subagents (chains, parallel)",
+	},
+	{
+		name: "pi-dynamic-workflows",
+		source: "npm:@quintinshaw/pi-dynamic-workflows",
+		blurb: "Fan tasks out across subagents (/workflows, /deep-research)",
+	},
+	{
+		name: "rpiv-ask-user-question",
+		source: "npm:@juicesharp/rpiv-ask-user-question",
+		blurb: "Structured questions with typed options instead of guessing",
+	},
 ];
 
 export interface PackagesFile {
@@ -35,19 +54,28 @@ export interface PackagesFile {
 
 /** Shell out to `pi install <source>`; throw a descriptive error on failure. */
 function spawnPiInstall(source: string): void {
-	const result = spawnSync("pi", ["install", source], { stdio: "ignore", timeout: 120_000 });
+	const result = spawnSync("pi", ["install", source], {
+		stdio: "ignore",
+		timeout: 120_000,
+	});
 	if (result.error) {
 		throw new Error(`pi install ${source} failed: ${result.error.message}`);
 	}
 	if (result.status !== 0) {
-		throw new Error(`pi install ${source} exited with status ${result.status ?? "unknown"}`);
+		throw new Error(
+			`pi install ${source} exited with status ${result.status ?? "unknown"}`,
+		);
 	}
 }
 
 /** A packages entry is either a plain string or an object with a `source`. */
 function entrySource(entry: unknown): string | undefined {
 	if (typeof entry === "string") return entry;
-	if (entry && typeof entry === "object" && typeof (entry as { source?: unknown }).source === "string") {
+	if (
+		entry &&
+		typeof entry === "object" &&
+		typeof (entry as { source?: unknown }).source === "string"
+	) {
 		return (entry as { source: string }).source;
 	}
 	return undefined;

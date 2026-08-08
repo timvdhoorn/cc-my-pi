@@ -6,14 +6,33 @@ Sync workflow: invoke the `sync-vendored-plugins` skill (Pi-config root,
 delta — a sync re-applies those items and nothing else; undocumented drift
 in vendored files is a bug.
 
+## extensions/pi-tasks/
+
+- **Upstream**: <https://github.com/tintinweb/pi-tasks>
+- **License**: MIT — tintinweb (`extensions/pi-tasks/LICENSE`)
+- **Pinned**: npm `@tintinweb/pi-tasks@0.7.2` (vendored 2026-08-07)
+- **Files**: upstream `src/`, LICENSE, README and changelog; local tests live
+  beside vendored source.
+- **Local delta**:
+  1. bundled from `extensions/index.ts`; removed from optional companion catalog
+  2. animated widget replaced by one static `aboveEditor` task list: `✓` for
+     completed, `□` for pending/in-progress, completed subject struck through
+  3. display omits task IDs, runtime/token stats, animation and truncation
+  4. Task tool calls/results stay model-visible but are hidden from transcript;
+     only persistent lower task list is shown to user
+  5. bundled Task tool definitions re-register at session start so this fork
+     wins during migration when upstream package remains installed
+- **Mutual exclusion**: remove `npm:@tintinweb/pi-tasks` from Pi package
+  settings after upgrading; bundled definitions replace standalone package.
+
 ## extensions/queue-steer/
 
-- **Upstream**: https://github.com/tmustier/pi-queue-steer
+- **Upstream**: <https://github.com/tmustier/pi-queue-steer>
 - **License**: MIT — Thomas Mustier
 - **Pinned**: commit `d395e9b` (vendored 2026-08-05; was c68ec21 / v0.1.0)
 - **Files**: index.ts (adapted), queue-state.ts (verbatim),
   editor-render.ts (verbatim), queue-state.test.ts + editor-render.test.ts
-  + command-rows.test.ts (ported: sibling import paths, register-fn call)
+  - command-rows.test.ts (ported: sibling import paths, register-fn call)
 - **Local delta** (keep exactly these, nothing more):
   1. default export → `registerBundledQueueSteer(pi, isEnabled)` with live
      gate (widget render + handleInput interception check `isEnabled()`)
@@ -37,7 +56,7 @@ in vendored files is a bug.
 
 ## extensions/claude-header/
 
-- **Upstream**: https://github.com/Phoobobo/pi-claude-code-tui
+- **Upstream**: <https://github.com/Phoobobo/pi-claude-code-tui>
 - **License**: MIT — Phoobobo (attribution retained in `index.ts`)
 - **FORKED 2026-07-20 (plan 031)** — attribution only; do not sync via
   sync-vendored-plugins. The layout, the π mascot (`pi-mascot.ts`) and the
@@ -62,7 +81,7 @@ in vendored files is a bug.
 ## extensions/double-esc-clear.ts
 
 - **Upstream**: `@thisux/pi-double-esc-clear` v1.0.3 (npm)
-- **License**: MIT — Sanju, https://sanju.sh/
+- **License**: MIT — Sanju, <https://sanju.sh/>
 - **Pinned**: v1.0.3 (pre-manifest; pin on next sync)
 - **Local delta**:
   1. exposed as `registerBundledDoubleEscClear(pi, isEnabled)` with live

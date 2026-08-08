@@ -5,6 +5,25 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-07
+
+### Added
+
+- **Built-in task tracking** — bundled and adapted `@tintinweb/pi-tasks` as one quiet persistent checklist above the editor, removing the need for a separate task package.
+- **Optional-extension installer** — first-run setup now offers recommended or custom paths and can install selected companion extensions directly through Pi.
+
+### Changed
+
+- **Claude-style tool calls by default** — each tool now renders as an individual call row with its result underneath; compact activity grouping remains opt-in.
+- **Stable running tool rows** — transient live output tails are now opt-in, preventing content from flashing before the final result appears. Fresh installs and setup previews share this default.
+- **Faster image paste presentation** — pasted images remain first-class attachments without repeatedly rendering expensive hover previews.
+- **More accurate statusline context** — context usage now follows Pi's current context accounting during long sessions and model changes.
+
+### Fixed
+
+- **Aligned result connectors** — tool results and pasted-image context now use one Claude-style `⎿` arm with continuation text aligned beneath it, instead of mixed `├`/`└` trees.
+- **Fresh-install consistency** — runtime defaults, setup wizard values, example configuration, and documentation now agree for tool grouping and live previews.
+
 ## [1.3.3] - 2026-08-06
 
 ### Fixed

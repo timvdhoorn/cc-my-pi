@@ -54,10 +54,14 @@ import type {
 	ToolStyle,
 } from "./cc-my-pi-settings-ui.js";
 import type { HeaderHooks } from "./claude-header/index.js";
-import { COMPANION_PACKAGES, createPiPackagesFile } from "./companion-packages.js";
+import {
+	COMPANION_PACKAGES,
+	createPiPackagesFile,
+} from "./companion-packages.js";
 import { createQuietStartupFile } from "./pi-agent-settings.js";
 import {
 	indentEditorContinuationLine,
+	normalizeClaudeUserContextBranches,
 	patchEditorPromptRender,
 	prefixEditorPromptLine,
 	renderClaudeUserMessageLine,
@@ -65,7 +69,20 @@ import {
 	trimUserMessagePadding,
 	userMessageCopyPayload,
 } from "./user-message-render.js";
-import { buildBashContentLines, renderClaudeBashLines } from "./bash-execution-render.js";
+import {
+	buildBashContentLines,
+	renderClaudeBashLines,
+} from "./bash-execution-render.js";
+import {
+	classifyToolActivityState,
+	formatClaudeResultBlock,
+	formatClaudeToolActivities,
+	formatClaudeToolCallLabel,
+	HIDDEN_TASK_TOOL_NAMES,
+	outdentClaudeResultBlock,
+	resolveLiveToolPreviewEnabled,
+	resolveToolGroupingEnabled,
+} from "./task-and-tool-presentation.js";
 
 import type { BundledLanguage, BundledTheme } from "shiki";
 
@@ -78,8 +95,19 @@ import type { BundledLanguage, BundledTheme } from "shiki";
 // ---------------------------------------------------------------------------
 
 type DiffApi = {
-	structuredPatch: (...args: any[]) => { hunks: Array<{ oldStart: number; oldLines: number; newStart: number; newLines: number; lines: string[] }> };
-	diffWords: (oldText: string, newText: string) => Array<{ value: string; added?: boolean; removed?: boolean }>;
+	structuredPatch: (...args: any[]) => {
+		hunks: Array<{
+			oldStart: number;
+			oldLines: number;
+			newStart: number;
+			newLines: number;
+			lines: string[];
+		}>;
+	};
+	diffWords: (
+		oldText: string,
+		newText: string,
+	) => Array<{ value: string; added?: boolean; removed?: boolean }>;
 };
 let diffModule: DiffApi | undefined;
 let diffModulePromise: Promise<DiffApi> | undefined;
@@ -98,6 +126,8 @@ function diffApi(): DiffApi {
 
 type SettingsUiModule = typeof import("./cc-my-pi-settings-ui.js");
 let settingsUiModule: Promise<SettingsUiModule> | undefined;
+let bundledTaskTools: any[] = [];
+const BUNDLED_TASK_TOOL_NAMES = HIDDEN_TASK_TOOL_NAMES;
 function loadSettingsUi(): Promise<SettingsUiModule> {
 	return (settingsUiModule ??= import("./cc-my-pi-settings-ui.js"));
 }
@@ -109,6 +139,7 @@ function loadSettingsUi(): Promise<SettingsUiModule> {
 function startOptionalBundles(pi: ExtensionAPI): Promise<void> {
 	return (async () => {
 		const [
+			piTasks,
 			escSteer,
 			doubleEsc,
 			queueSteer,
@@ -121,6 +152,7 @@ function startOptionalBundles(pi: ExtensionAPI): Promise<void> {
 			claudeHeader,
 			loadedStats,
 		] = await Promise.all([
+			import("./pi-tasks/src/index.js"),
 			import("./esc-steer.js"),
 			import("./double-esc-clear.js"),
 			import("./queue-steer/index.js"),
@@ -134,21 +166,52 @@ function startOptionalBundles(pi: ExtensionAPI): Promise<void> {
 			import("./claude-header/loaded-stats.js"),
 		]);
 
+		const registerPiTasks = (piTasks as any).default as (
+			api: ExtensionAPI,
+		) => void;
+		const capturedTaskTools: any[] = [];
+		const taskApi = new Proxy(pi as any, {
+			get(target, property, receiver) {
+				if (property === "registerTool") {
+					return (tool: any) => {
+						if (BUNDLED_TASK_TOOL_NAMES.has(tool?.name))
+							capturedTaskTools.push(tool);
+						return target.registerTool(tool);
+					};
+				}
+				const value = Reflect.get(target, property, receiver);
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		}) as ExtensionAPI;
+		registerPiTasks(taskApi);
+		bundledTaskTools = capturedTaskTools;
 		escSteer.registerBundledEscSteer(pi, escSteerEnabled);
 		doubleEsc.registerBundledDoubleEscClear(pi, doubleEscClearEnabled);
 		queueSteer.registerBundledQueueSteer(pi, queueSteerEnabled);
 		imagePaster.registerBundledImagePaster(pi, imagePasterEnabled());
-		sessionCommands.registerSessionCommands(pi, readSettings().sessionCommandsEnabled !== false);
-		copyCommand.registerCopyCommand(pi, readSettings().copyCommandEnabled !== false, {
-			copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
-			setCopyAlwaysFull: (v: boolean) => writeSettingsKey("copyAlwaysFull", v),
-		});
+		sessionCommands.registerSessionCommands(
+			pi,
+			readSettings().sessionCommandsEnabled !== false,
+		);
+		copyCommand.registerCopyCommand(
+			pi,
+			readSettings().copyCommandEnabled !== false,
+			{
+				copyAlwaysFull: () => readSettings().copyAlwaysFull === true,
+				setCopyAlwaysFull: (v: boolean) =>
+					writeSettingsKey("copyAlwaysFull", v),
+			},
+		);
 
 		const claudeHeaderEnabled = readSettings().claudeHeaderEnabled !== false;
 		let statuslineHeaderHooks: HeaderHooks["onTui"];
 		if (readSettings().statuslineEnabled !== false) {
-			const registerModelInfo = (modelInfo as any).default as (api: ExtensionAPI) => void;
-			const registerGitInfo = (gitInfo as any).default as (api: ExtensionAPI) => void;
+			const registerModelInfo = (modelInfo as any).default as (
+				api: ExtensionAPI,
+			) => void;
+			const registerGitInfo = (gitInfo as any).default as (
+				api: ExtensionAPI,
+			) => void;
 			const registerUiCustomization = (uiCustomization as any).default as (
 				api: ExtensionAPI,
 				opts: { skipHeader: boolean },
@@ -157,11 +220,15 @@ function startOptionalBundles(pi: ExtensionAPI): Promise<void> {
 			registerGitInfo(pi);
 			// skipHeader hands the header over to the vendored claude-header module;
 			// the statusline still runs its header side effects via the onTui hook.
-			statuslineHeaderHooks = registerUiCustomization(pi, { skipHeader: claudeHeaderEnabled }).onTui;
+			statuslineHeaderHooks = registerUiCustomization(pi, {
+				skipHeader: claudeHeaderEnabled,
+			}).onTui;
 		}
 		// Register AFTER the statusline block so the header's setTimeout(0) apply
 		// wins the setHeader race deterministically.
-		claudeHeader.registerClaudeHeader(pi, claudeHeaderEnabled, { onTui: statuslineHeaderHooks });
+		claudeHeader.registerClaudeHeader(pi, claudeHeaderEnabled, {
+			onTui: statuslineHeaderHooks,
+		});
 		// /loaded is ALWAYS registered, independent of the header setting (Decision 5).
 		loadedStats.registerLoadedCommand(pi);
 	})();
@@ -183,16 +250,36 @@ const ANSI_PRESENT_RE = /\x1b\[[0-9;]*m/;
 const PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-container-render");
 const TOOL_RENDER_CACHE = Symbol.for("pi-claude-style-tools:tool-render-cache");
 const COMPONENT_PARENT = Symbol.for("pi-claude-style-tools:component-parent");
-const PARENT_TRACKING_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-parent-tracking");
-const PARENT_TRACKING_DISPATCH_FLAG = Symbol.for("pi-claude-style-tools:parent-tracking-dispatch-v2");
-const PARENT_TRACKING_GROUP_HOOK = Symbol.for("pi-claude-style-tools:parent-tracking-group-hook");
-const TOOL_CACHE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool-cache-invalidation");
-const TOOL_IMAGE_EXPAND_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-read-image-expansion");
-const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-custom-message-render");
-const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-user-message-render");
-const PROMPT_EDITOR_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-prompt-editor-render");
-const UI_NOTIFY_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-ui-notifications-v2");
-const SKILL_INVOCATION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-skill-invocation");
+const PARENT_TRACKING_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-parent-tracking",
+);
+const PARENT_TRACKING_DISPATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:parent-tracking-dispatch-v2",
+);
+const PARENT_TRACKING_GROUP_HOOK = Symbol.for(
+	"pi-claude-style-tools:parent-tracking-group-hook",
+);
+const TOOL_CACHE_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-tool-cache-invalidation",
+);
+const TOOL_IMAGE_EXPAND_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-read-image-expansion",
+);
+const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-custom-message-render",
+);
+const USER_MESSAGE_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-user-message-render",
+);
+const PROMPT_EDITOR_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-prompt-editor-render",
+);
+const UI_NOTIFY_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-ui-notifications-v2",
+);
+const SKILL_INVOCATION_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-skill-invocation",
+);
 const WRAP_MARK = "\uE000";
 const KITTY_IMAGE_PREFIX = "\x1b_G";
 const ITERM2_IMAGE_PREFIX = "\x1b]1337;File=";
@@ -215,7 +302,7 @@ interface SettingsFile {
 	showCompactToolStatusDots?: boolean;
 	bashOutputMode?: "opencode" | "summary" | "preview";
 	bashCollapsedLines?: number;
-	/** Show a small live output preview while tools are still running. Defaults to true. */
+	/** Show a small live output preview while tools are still running. Defaults to false. */
 	liveToolPreview?: boolean;
 	/** Number of live output lines to show while collapsed. Defaults to 5. */
 	liveToolPreviewLines?: number;
@@ -280,7 +367,10 @@ const SETTINGS_CACHE_TTL_MS = 5_000;
 
 function readSettings(): SettingsFile {
 	const now = Date.now();
-	if (_settingsCache && now - _settingsCache.timestamp < SETTINGS_CACHE_TTL_MS) {
+	if (
+		_settingsCache &&
+		now - _settingsCache.timestamp < SETTINGS_CACHE_TTL_MS
+	) {
 		return _settingsCache.value;
 	}
 	const cwdPath = `${process.cwd()}/.pi/settings.json`;
@@ -290,7 +380,8 @@ function readSettings(): SettingsFile {
 		try {
 			if (!path || !existsSync(path)) continue;
 			const raw = JSON.parse(readFileSync(path, "utf8"));
-			if (raw && typeof raw === "object") Object.assign(merged, raw as SettingsFile);
+			if (raw && typeof raw === "object")
+				Object.assign(merged, raw as SettingsFile);
 		} catch {
 			// ignore invalid settings files
 		}
@@ -303,9 +394,12 @@ function readSettings(): SettingsFile {
 // globalThis and invalidates its settings cache when it changes. Lets
 // /cc-my-pi spinner edits take effect on the next 250ms spinner tick instead of
 // waiting for the file-stat TTL.
-const SPINNER_BUST_KEY = Symbol.for("pi-claude-style-tools:spinner-settings-bust");
+const SPINNER_BUST_KEY = Symbol.for(
+	"pi-claude-style-tools:spinner-settings-bust",
+);
 function bustSpinnerSettingsCache(): void {
-	const current = ((globalThis as any)[SPINNER_BUST_KEY] as number | undefined) ?? 0;
+	const current =
+		((globalThis as any)[SPINNER_BUST_KEY] as number | undefined) ?? 0;
 	(globalThis as any)[SPINNER_BUST_KEY] = current + 1;
 }
 
@@ -317,8 +411,11 @@ function writeSettingsKey(key: string, value: unknown): void {
 	const path = `${dir}/settings.json`;
 	let settings: Record<string, unknown> = {};
 	try {
-		if (existsSync(path)) settings = JSON.parse(readFileSync(path, "utf8")) ?? {};
-	} catch { /* start fresh */ }
+		if (existsSync(path))
+			settings = JSON.parse(readFileSync(path, "utf8")) ?? {};
+	} catch {
+		/* start fresh */
+	}
 	if (value === undefined) {
 		delete settings[key];
 	} else {
@@ -327,10 +424,13 @@ function writeSettingsKey(key: string, value: unknown): void {
 	try {
 		mkdirSync(dir, { recursive: true });
 		writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
-	} catch { /* best effort */ }
+	} catch {
+		/* best effort */
+	}
 }
 
-let toolBackgroundOverride: "default" | "transparent" | "outlines" | null = null;
+let toolBackgroundOverride: "default" | "transparent" | "outlines" | null =
+	null;
 
 function syncToolBackgroundMode(): void {
 	if (toolBackgroundOverride) {
@@ -339,7 +439,8 @@ function syncToolBackgroundMode(): void {
 	}
 	const settings = readSettings();
 	// Backward compat: "border" was renamed to "outlines"
-	const raw = settings.toolBackground === "border" ? "outlines" : settings.toolBackground;
+	const raw =
+		settings.toolBackground === "border" ? "outlines" : settings.toolBackground;
 	toolBackgroundMode = raw ?? "outlines";
 }
 
@@ -378,12 +479,17 @@ function stripAnsi(text: string): string {
 }
 
 function stripRenderedHeadingMarkers(line: string): string {
-	return line.replace(/^((?:\x1b\[[0-9;]*m|[ \t])*)#{3,6}[ \t]*((?:\x1b\[[0-9;]*m)*)/, "$1$2");
+	return line.replace(
+		/^((?:\x1b\[[0-9;]*m|[ \t])*)#{3,6}[ \t]*((?:\x1b\[[0-9;]*m)*)/,
+		"$1$2",
+	);
 }
 
 const PLAIN_FENCE_LANGS = new Set(["text", "txt", "plain", "plaintext", ""]);
 
-function parseRenderedFenceLine(line: string): { kind: "open" | "close"; language: string } | undefined {
+function parseRenderedFenceLine(
+	line: string,
+): { kind: "open" | "close"; language: string } | undefined {
 	const plain = stripAnsi(line).trim();
 	if (plain === "```") return { kind: "close", language: "" };
 	if (!plain.startsWith("```")) return undefined;
@@ -437,7 +543,10 @@ function extractBorderedInnerForCopy(line: string): string {
 	const start = plain.indexOf("│");
 	const end = plain.lastIndexOf("│");
 	if (start === -1 || end <= start) return stripAnsi(line).trim();
-	return plain.slice(start + 1, end).replace(/^\s+/, "").replace(/\s+$/, "");
+	return plain
+		.slice(start + 1, end)
+		.replace(/^\s+/, "")
+		.replace(/\s+$/, "");
 }
 
 function applyTerminalCopyZones(lines: string[]): string[] {
@@ -512,7 +621,11 @@ function borderedCodeBlockLine(line: string, width: number): string {
 	return `${BORDER_COLOR}│${TRANSPARENT_RESET} ${content}${padding} ${BORDER_COLOR}│${TRANSPARENT_RESET}`;
 }
 
-function boxRenderedCodeBlock(bodyLines: string[], language: string, width: number): string[] {
+function boxRenderedCodeBlock(
+	bodyLines: string[],
+	language: string,
+	width: number,
+): string[] {
 	const safeWidth = Math.max(4, Number.isFinite(width) ? Math.floor(width) : 0);
 	const framed = [
 		roundedCodeBlockTop(safeWidth, language),
@@ -522,7 +635,10 @@ function boxRenderedCodeBlock(bodyLines: string[], language: string, width: numb
 	return framed.map((line) => padRenderedLineToWidth(line, safeWidth));
 }
 
-function sanitizeRenderedTextBlockLines(lines: string[], width?: number): string[] {
+function sanitizeRenderedTextBlockLines(
+	lines: string[],
+	width?: number,
+): string[] {
 	const result: string[] = [];
 	let i = 0;
 	const canBox = typeof width === "number" && width > 0;
@@ -570,7 +686,8 @@ function borderLine(width: number): string {
 }
 
 function terminalColumnCeiling(): number {
-	const cols = typeof process !== "undefined" ? process.stdout?.columns : undefined;
+	const cols =
+		typeof process !== "undefined" ? process.stdout?.columns : undefined;
 	return Number.isFinite(cols) && (cols as number) > 0 ? (cols as number) : 0;
 }
 
@@ -584,24 +701,39 @@ function clampLineWidth(line: string, width: number): string {
 	return visibleWidth(line) > ceiling ? truncateToWidth(line, ceiling) : line;
 }
 
-function isToolExecutionLike(value: unknown): value is { toolName: string; toolCallId: string } {
+function isToolExecutionLike(
+	value: unknown,
+): value is { toolName: string; toolCallId: string } {
 	if (!value || typeof value !== "object") return false;
 	const candidate = value as Record<string, unknown>;
-	return typeof candidate.toolName === "string" && typeof candidate.toolCallId === "string";
+	return (
+		typeof candidate.toolName === "string" &&
+		typeof candidate.toolCallId === "string"
+	);
 }
 
-const AGENT_FAMILY_TOOL_NAMES = new Set(["Agent", "Agents", "get_subagent_result", "steer_subagent"]);
+const AGENT_FAMILY_TOOL_NAMES = new Set([
+	"Agent",
+	"Agents",
+	"get_subagent_result",
+	"steer_subagent",
+]);
 
 function isAgentFamilyToolName(name: unknown): boolean {
 	return typeof name === "string" && AGENT_FAMILY_TOOL_NAMES.has(name);
 }
 
 function isTerminalImageLine(line: string): boolean {
-	return line.includes(KITTY_IMAGE_PREFIX) || line.includes(ITERM2_IMAGE_PREFIX);
+	return (
+		line.includes(KITTY_IMAGE_PREFIX) || line.includes(ITERM2_IMAGE_PREFIX)
+	);
 }
 
 function normalizeLeadingCheckGlyph(line: string): string {
-	return line.replace(/^((?:\x1b\[[0-9;]*m|[ \t]|[├└⎿│─])*)[✓✔]((?:\x1b\[[0-9;]*m)*)(?=\s)/, `$1${STATUS_DOT_FILLED}$2`);
+	return line.replace(
+		/^((?:\x1b\[[0-9;]*m|[ \t]|[├└⎿│─])*)[✓✔]((?:\x1b\[[0-9;]*m)*)(?=\s)/,
+		`$1${STATUS_DOT_FILLED}$2`,
+	);
 }
 
 function stripOuterBackgroundAnsi(line: string): string {
@@ -618,16 +750,20 @@ function firstImageBlockStart(lines: string[]): number {
 	return start;
 }
 
-function splitRenderedImageBlock(lines: string[]): { textLines: string[]; imageLines: string[] } {
+function splitRenderedImageBlock(lines: string[]): {
+	textLines: string[];
+	imageLines: string[];
+} {
 	const imageStart = firstImageBlockStart(lines);
 	if (imageStart === -1) return { textLines: lines, imageLines: [] };
 	const textLines = lines.slice(0, imageStart);
-	while (textLines.length > 0 && isBlankLine(textLines[textLines.length - 1])) textLines.pop();
+	while (textLines.length > 0 && isBlankLine(textLines[textLines.length - 1]))
+		textLines.pop();
 	return { textLines, imageLines: lines.slice(imageStart) };
 }
 
 function toolGroupingEnabled(): boolean {
-	return readSettings().groupToolCalls !== false;
+	return resolveToolGroupingEnabled(readSettings().groupToolCalls);
 }
 
 function setToolGroupingEnabled(enabled: boolean): void {
@@ -655,15 +791,12 @@ function preferDenseToolChrome(expanded: boolean): boolean {
 type ToolStatus = "pending" | "success" | "error";
 
 function getToolStatusForGroup(tool: any): ToolStatus {
-	if (tool?.result?.isError) return "error";
-	if (tool?.result && tool?.isPartial !== true) return "success";
-	// Only in-flight tools that actually started this agent run count as pending.
-	// History rows reconstructed without a matching toolResult stay isPartial=true
-	// forever; treating them as pending made interrupted tools blink again on resume.
-	if (tool?.isPartial === true && tool?.executionStarted === true && currentAgentWorkStartMs !== undefined) {
-		return "pending";
-	}
-	return "success";
+	return classifyToolActivityState({
+		isPartial: tool?.isPartial === true,
+		executionStarted: tool?.executionStarted === true,
+		hasResult: tool?.result !== undefined,
+		isError: tool?.result?.isError === true,
+	});
 }
 
 let TOOL_STATUS_SUCCESS = "\x1b[38;2;0;189;90m"; // #00BD5A
@@ -671,16 +804,25 @@ let TOOL_STATUS_ERROR = "\x1b[31m";
 let TOOL_STATUS_PENDING = "\x1b[90m";
 
 function statusText(status: ToolStatus, count: number): string {
-	const label = status === "success" ? "done" : status === "error" ? "failed" : "running";
-	const color = status === "success" ? TOOL_STATUS_SUCCESS : status === "error" ? TOOL_STATUS_ERROR : TOOL_STATUS_PENDING;
+	const label =
+		status === "success" ? "done" : status === "error" ? "failed" : "running";
+	const color =
+		status === "success"
+			? TOOL_STATUS_SUCCESS
+			: status === "error"
+				? TOOL_STATUS_ERROR
+				: TOOL_STATUS_PENDING;
 	return `${color}${count}${TRANSPARENT_RESET} ${label}`;
 }
 
 function countToolStatuses(tools: any[]): Record<ToolStatus, number> {
-	return tools.reduce((counts, tool) => {
-		counts[getToolStatusForGroup(tool)]++;
-		return counts;
-	}, { pending: 0, success: 0, error: 0 } as Record<ToolStatus, number>);
+	return tools.reduce(
+		(counts, tool) => {
+			counts[getToolStatusForGroup(tool)]++;
+			return counts;
+		},
+		{ pending: 0, success: 0, error: 0 } as Record<ToolStatus, number>,
+	);
 }
 
 function formatToolGroupCounts(tools: any[]): string {
@@ -693,7 +835,9 @@ function formatToolGroupCounts(tools: any[]): string {
 }
 
 function getToolName(tool: any): string {
-	return typeof tool?.toolName === "string" && tool.toolName ? tool.toolName : "tool";
+	return typeof tool?.toolName === "string" && tool.toolName
+		? tool.toolName
+		: "tool";
 }
 
 /**
@@ -703,13 +847,15 @@ function getToolName(tool: any): string {
 function getToolGroupKey(tool: any): string {
 	const name = getToolName(tool);
 	// mcp__server__action / mcp_server_action / server__action
-	const mcpDouble = name.match(/^mcp__([^_]+)__/i) || name.match(/^mcp:([^:]+):/i);
+	const mcpDouble =
+		name.match(/^mcp__([^_]+)__/i) || name.match(/^mcp:([^:]+):/i);
 	if (mcpDouble) return `mcp:${mcpDouble[1].toLowerCase()}`;
 	const mcpSingle = name.match(/^mcp[_-]([^_-]+)/i);
 	if (mcpSingle) return `mcp:${mcpSingle[1].toLowerCase()}`;
 	// bare server__tool (common MCP adapter shape)
 	const serverTool = name.match(/^([A-Za-z][\w.-]+)__/);
-	if (serverTool && !CORE_TOOL_OVERRIDES.has(name)) return `svc:${serverTool[1].toLowerCase()}`;
+	if (serverTool && !CORE_TOOL_OVERRIDES.has(name))
+		return `svc:${serverTool[1].toLowerCase()}`;
 	return name;
 }
 
@@ -723,7 +869,9 @@ function displayNameForGroupKey(key: string): string {
 function getGroupedToolName(tools: any[]): string | undefined {
 	// Prefer exact tool-name match for core tools; MCP uses group key.
 	const firstKey = getToolGroupKey(tools[0]);
-	return tools.every((tool) => getToolGroupKey(tool) === firstKey) ? firstKey : undefined;
+	return tools.every((tool) => getToolGroupKey(tool) === firstKey)
+		? firstKey
+		: undefined;
 }
 
 function getToolGroupLabel(tools: any[]): string {
@@ -755,7 +903,10 @@ function paintStatusDot(colorAnsi: string): string {
 	return `${colorAnsi}${STATUS_DOT_BOLD}${STATUS_DOT_FILLED}${TRANSPARENT_RESET}`;
 }
 
-function themeStatusDot(theme: Theme, colorKey: "success" | "error" | "dim" | "muted"): string {
+function themeStatusDot(
+	theme: Theme,
+	colorKey: "success" | "error" | "dim" | "muted",
+): string {
 	// theme.fg may not preserve nested SGR cleanly — color the glyph string itself.
 	if (colorKey === "success") return paintStatusDot(TOOL_STATUS_SUCCESS);
 	return theme.fg(colorKey, `${STATUS_DOT_BOLD}${STATUS_DOT_FILLED}`);
@@ -778,8 +929,16 @@ function agentBreatheDot(_theme: Theme): string {
 	return paintAgentBreatheDot(TOOL_STATUS_SUCCESS);
 }
 
-function groupStatusLight(status: ToolStatus, options?: { agentBreathe?: boolean }): string {
-	const color = status === "success" ? TOOL_STATUS_SUCCESS : status === "error" ? TOOL_STATUS_ERROR : TOOL_STATUS_PENDING;
+function groupStatusLight(
+	status: ToolStatus,
+	options?: { agentBreathe?: boolean },
+): string {
+	const color =
+		status === "success"
+			? TOOL_STATUS_SUCCESS
+			: status === "error"
+				? TOOL_STATUS_ERROR
+				: TOOL_STATUS_PENDING;
 	if (status === "pending") {
 		// Prefer the shared blink phase over wall-clock so group lights stay in sync
 		// with the global timer (and Agent breathe). Space keeps column alignment.
@@ -795,10 +954,12 @@ function formatToolNameList(tools: any[]): string {
 		const name = getToolName(tool);
 		counts.set(name, (counts.get(name) ?? 0) + 1);
 	}
-	return [...counts.entries()]
-		.slice(0, 4)
-		.map(([name, count]) => `${name}${count > 1 ? `×${count}` : ""}`)
-		.join(", ") + (counts.size > 4 ? ", …" : "");
+	return (
+		[...counts.entries()]
+			.slice(0, 4)
+			.map(([name, count]) => `${name}${count > 1 ? `×${count}` : ""}`)
+			.join(", ") + (counts.size > 4 ? ", …" : "")
+	);
 }
 
 /** Humanized count list: `Bash ×3 · Skill · Grep`. */
@@ -817,39 +978,53 @@ function formatToolCountList(tools: any[], maxKinds = 5): string {
 	return shown.join(" · ");
 }
 
-/** Claude Code prose: "Called Bash 3 times" / "Called Bash 2 times, Read, Grep". */
-function formatCalledToolsPhrase(tools: any[], maxKinds = 5): string {
-	const counts = new Map<string, number>();
-	for (const tool of tools) {
-		const key = getToolGroupKey(tool);
-		counts.set(key, (counts.get(key) ?? 0) + 1);
-	}
-	const entries = [...counts.entries()];
-	if (entries.length === 0) return "Called tools";
-	if (entries.length === 1) {
-		const [key, count] = entries[0];
-		const label = displayNameForGroupKey(key);
-		return count === 1 ? `Called ${label}` : `Called ${label} ${count} times`;
-	}
-	const shown = entries.slice(0, maxKinds).map(([key, count]) => {
-		const label = displayNameForGroupKey(key);
-		return count > 1 ? `${label} ${count} times` : label;
-	});
-	if (entries.length > maxKinds) shown.push("…");
-	return `Called ${shown.join(", ")}`;
+function toolActivityCount(tool: any): number {
+	const details = tool?.result?.details;
+	return getToolName(tool) === "edit" && Number.isFinite(details?.editCount)
+		? Math.max(1, details.editCount)
+		: 1;
+}
+
+function toolActivityDiff(tool: any): { added: number; removed: number } {
+	const details = tool?.result?.details;
+	return {
+		added: Number(details?.totalAdded ?? details?.added ?? 0) || 0,
+		removed: Number(details?.totalRemoved ?? details?.removed ?? 0) || 0,
+	};
+}
+
+function formatClaudeToolsPhrase(tools: any[], maxKinds = 5): string {
+	return formatClaudeToolActivities(
+		tools.map((tool) => ({
+			name: getToolName(tool),
+			status: getToolStatusForGroup(tool),
+			count: toolActivityCount(tool),
+			...toolActivityDiff(tool),
+		})),
+		maxKinds,
+		{
+			formatAdded: (value) => `${FG_ADD}+${value}${D_RST}`,
+			formatRemoved: (value) => `${FG_DEL}-${value}${D_RST}`,
+		},
+	);
 }
 
 /** Latest useful arg/preview snippet for a collapsed same-tool group. */
 function getCollapsedGroupPreview(tools: any[], maxLen = 56): string {
 	for (let i = tools.length - 1; i >= 0; i--) {
 		const summary = getToolArgSummary(tools[i]);
-		if (summary && stripAnsi(summary).trim()) return summarizeText(stripAnsi(summary).trim(), maxLen);
+		if (summary && stripAnsi(summary).trim())
+			return summarizeText(stripAnsi(summary).trim(), maxLen);
 	}
 	for (let i = tools.length - 1; i >= 0; i--) {
-		const line = stripAnsi(getCompactToolLine(tools[i], 160)).replaceAll(WRAP_MARK, "").trim();
+		const line = stripAnsi(getCompactToolLine(tools[i], 160))
+			.replaceAll(WRAP_MARK, "")
+			.trim();
 		if (!line) continue;
 		const label = humanizeToolName(getToolName(tools[i]));
-		const stripped = line.replace(new RegExp(`^${escapeRegex(label)}\\s*`, "i"), "").trim();
+		const stripped = line
+			.replace(new RegExp(`^${escapeRegex(label)}\\s*`, "i"), "")
+			.trim();
 		if (stripped) return summarizeText(stripped, maxLen);
 	}
 	return "";
@@ -875,7 +1050,10 @@ function escapeRegex(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function stripGroupedToolLabel(line: string, label: string | undefined): string {
+function stripGroupedToolLabel(
+	line: string,
+	label: string | undefined,
+): string {
 	if (!label) return line;
 	const ansi = "(?:\\x1b\\[[0-9;]*m)*";
 	const pattern = new RegExp(`^(${ansi})${escapeRegex(label)}(${ansi})\\s+`);
@@ -888,7 +1066,9 @@ function isChromeOnlyLine(line: string): boolean {
 }
 
 function stripToolChrome(lines: string[]): string[] {
-	return trimRenderedBlankLines(lines).filter((line) => !isChromeOnlyLine(line));
+	return trimRenderedBlankLines(lines).filter(
+		(line) => !isChromeOnlyLine(line),
+	);
 }
 
 function stripLeadingToolStatus(line: string): string {
@@ -911,7 +1091,12 @@ function trimAnsiLeft(text: string): string {
 }
 
 function removeGroupedToolPrefix(line: string, groupedLabel?: string): string {
-	return trimAnsiLeft(stripGroupedToolLabel(trimAnsiLeft(stripLeadingToolStatus(line)), groupedLabel));
+	return trimAnsiLeft(
+		stripGroupedToolLabel(
+			trimAnsiLeft(stripLeadingToolStatus(line)),
+			groupedLabel,
+		),
+	);
 }
 
 function tintGroupedToolLine(line: string, _groupedLabel?: string): string {
@@ -929,17 +1114,40 @@ function getToolArgSummary(tool: any): string {
 		if (parts.length > 0) value += ` (${parts.join(", ")})`;
 		return value;
 	}
-	if (name === "bash") return summarizeText(args.command ?? "", 72);
-	if (name === "grep") return `"${summarizeText(args.pattern ?? "", 40)}"${args.path ? ` in ${args.path}` : ""}`;
-	if (name === "find") return `"${summarizeText(args.pattern ?? "", 40)}"${args.path ? ` in ${args.path}` : ""}`;
+	if (name === "bash") {
+		const command = summarizeText(args.command ?? "", 72);
+		return command ? `$ ${command}` : "";
+	}
+	if (name === "grep")
+		return `"${summarizeText(args.pattern ?? "", 40)}"${args.path ? ` in ${args.path}` : ""}`;
+	if (name === "find")
+		return `"${summarizeText(args.pattern ?? "", 40)}"${args.path ? ` in ${args.path}` : ""}`;
 	if (name === "ls") return shortPath(process.cwd(), args.path ?? ".");
 	if (name === "ask_user_question" || name === "questionnaire") {
-		const questions = Array.isArray(args?.questions) ? args.questions.length : 0;
-		return questions > 0 ? `${questions} question${questions === 1 ? "" : "s"}` : "";
+		const questions = Array.isArray(args?.questions)
+			? args.questions.length
+			: 0;
+		return questions > 0
+			? `${questions} question${questions === 1 ? "" : "s"}`
+			: "";
 	}
 	if (name === "advisor") return getConfiguredAdvisorSummary();
 	// Never fall back to the tool name — that duplicates the title in toolHeader().
-	return summarizeText(getStringArg(args, "path", "file_path", "url", "query", "name", "subject", "tool", "description", "prompt"), 72);
+	return summarizeText(
+		getStringArg(
+			args,
+			"path",
+			"file_path",
+			"url",
+			"query",
+			"name",
+			"subject",
+			"tool",
+			"description",
+			"prompt",
+		),
+		72,
+	);
 }
 
 function getConfiguredAdvisorSummary(): string {
@@ -948,8 +1156,10 @@ function getConfiguredAdvisorSummary(): string {
 		const config = JSON.parse(
 			readFileSync(`${home}/.config/rpiv-advisor/advisor.json`, "utf8"),
 		) as { modelKey?: unknown; effort?: unknown };
-		const model = typeof config.modelKey === "string" ? config.modelKey.trim() : "";
-		const effort = typeof config.effort === "string" ? config.effort.trim() : "";
+		const model =
+			typeof config.modelKey === "string" ? config.modelKey.trim() : "";
+		const effort =
+			typeof config.effort === "string" ? config.effort.trim() : "";
 		return model ? `${model}${effort ? ` (${effort})` : ""}` : "";
 	} catch {
 		return "";
@@ -959,7 +1169,8 @@ function getConfiguredAdvisorSummary(): string {
 function getToolCallLine(tool: any): string {
 	const value = (tool as any)?.callRendererComponent?.value;
 	if (typeof value === "string" && value.trim()) {
-		const line = value.split("\n").find((line) => stripAnsi(line).trim()) ?? value;
+		const line =
+			value.split("\n").find((line) => stripAnsi(line).trim()) ?? value;
 		return line.replaceAll(WRAP_MARK, "");
 	}
 	const summary = getToolArgSummary(tool);
@@ -967,7 +1178,11 @@ function getToolCallLine(tool: any): string {
 	return `${label}${summary ? ` ${summary}` : ""}`;
 }
 
-function getCompactToolLine(tool: any, width: number, groupedLabel?: string): string {
+function getCompactToolLine(
+	tool: any,
+	width: number,
+	groupedLabel?: string,
+): string {
 	const content = removeGroupedToolPrefix(getToolCallLine(tool), groupedLabel);
 	return clampLineWidth(content || getToolName(tool), width);
 }
@@ -979,7 +1194,11 @@ function getCompactToolLine(tool: any, width: number, groupedLabel?: string): st
  * ungrouped view shows (e.g. "5 lines returned • ctrl+o to toggle"); the
  * toggle hint is dropped because the group header already shows one.
  */
-function getCompactToolSummary(tool: any, width: number, groupedLabel?: string): string {
+function getCompactToolSummary(
+	tool: any,
+	width: number,
+	groupedLabel?: string,
+): string {
 	if (getToolStatusForGroup(tool) === "pending") return "";
 	let body: string[];
 	try {
@@ -997,9 +1216,14 @@ function getCompactToolSummary(tool: any, width: number, groupedLabel?: string):
 		.replace(/^[├└⎿│─\s]+/, "")
 		.trim();
 	if (!plain) return "";
-	const hintPlain = stripAnsi(toolOutputDetailHint(undefined as any, false, true)).trim();
+	const hintPlain = stripAnsi(
+		toolOutputDetailHint(undefined as any, false, true),
+	).trim();
 	if (hintPlain && plain.endsWith(hintPlain)) {
-		plain = plain.slice(0, plain.length - hintPlain.length).replace(/[\s•·]+$/, "").trim();
+		plain = plain
+			.slice(0, plain.length - hintPlain.length)
+			.replace(/[\s•·]+$/, "")
+			.trim();
 	}
 	return plain;
 }
@@ -1009,11 +1233,17 @@ function appendCompactSummary(title: string, summary: string): string {
 	return `${title} ${FG_DIM}· ${summary}${TRANSPARENT_RESET}`;
 }
 
-function getExpandedToolGroupLines(tool: any, width: number, groupedLabel?: string): string[] {
+function getExpandedToolGroupLines(
+	tool: any,
+	width: number,
+	groupedLabel?: string,
+): string[] {
 	const lines = stripToolChrome(tool.render(Math.max(1, width)))
 		.map((line) => removeGroupedToolPrefix(line, groupedLabel))
 		.map((line) => tintGroupedToolLine(line, groupedLabel));
-	return lines.length > 0 ? lines : [`${FG_DIM}${String(tool?.toolName ?? "tool")}${TRANSPARENT_RESET}`];
+	return lines.length > 0
+		? lines
+		: [`${FG_DIM}${String(tool?.toolName ?? "tool")}${TRANSPARENT_RESET}`];
 }
 
 function branchPrefix(index: number, total: number, theme?: Theme): string {
@@ -1025,7 +1255,11 @@ function branchPrefix(index: number, total: number, theme?: Theme): string {
 	return ` ${rule}${branch}${TRANSPARENT_RESET} `;
 }
 
-function branchContinuation(index: number, total: number, theme?: Theme): string {
+function branchContinuation(
+	index: number,
+	total: number,
+	theme?: Theme,
+): string {
 	const rule = currentToolBranchAnsi(theme);
 	// Match lead width of ` X ` (3 cols of structure + spaces handled outside).
 	return index === total - 1 ? "   " : ` ${rule}│${TRANSPARENT_RESET} `;
@@ -1040,7 +1274,9 @@ function formatBranchedToolLines(
 	options?: { agentBreathe?: boolean },
 ): string[] {
 	const output: string[] = [];
-	const content = lines.filter((line) => isTerminalImageLine(line) || stripAnsi(line).trim().length > 0);
+	const content = lines.filter(
+		(line) => isTerminalImageLine(line) || stripAnsi(line).trim().length > 0,
+	);
 	const safeContent = content.length > 0 ? content : [""];
 	const light = groupStatusLight(status, options);
 	for (let lineIndex = 0; lineIndex < safeContent.length; lineIndex++) {
@@ -1052,18 +1288,50 @@ function formatBranchedToolLines(
 		// Always strip any leftover status marker from the child call line before
 		// re-prefixing. Agent breathe used · which the old stripper missed, so the
 		// title walked sideways as size changed inside groups.
-		const body = lineIndex === 0 ? removeGroupedToolPrefix(line) : trimAnsiLeft(line);
-		const prefix = lineIndex === 0 ? `${branchPrefix(index, total)}${light} ` : `${branchContinuation(index, total)}  `;
+		const body =
+			lineIndex === 0 ? removeGroupedToolPrefix(line) : trimAnsiLeft(line);
+		const prefix =
+			lineIndex === 0
+				? `${branchPrefix(index, total)}${light} `
+				: `${branchContinuation(index, total)}  `;
 		output.push(clampLineWidth(`${prefix}${body}`, width));
 	}
 	return output;
 }
 
-const NON_GROUPABLE_TOOL_NAMES = new Set(["edit", "write", "apply_patch"]);
+function renderLiveToolGroupDetails(
+	tools: any[],
+	width: number,
+	foreground: string,
+): string[] {
+	const pendingTools = tools.filter(
+		(tool) => getToolStatusForGroup(tool) === "pending",
+	);
+	const lines: string[] = [];
+	for (let index = 0; index < pendingTools.length; index++) {
+		const detail = getToolArgSummary(pendingTools[index]);
+		if (!detail) continue;
+		const branch = index === pendingTools.length - 1 ? "└" : "├";
+		lines.push(
+			clampLineWidth(
+				` ${currentToolBranchAnsi()}${branch}${TRANSPARENT_RESET}  ${foreground}${detail}${TRANSPARENT_RESET}`,
+				width,
+			),
+		);
+	}
+	return lines;
+}
+
+const NON_GROUPABLE_TOOL_NAMES = new Set(BUNDLED_TASK_TOOL_NAMES);
 const ACTIVE_TOOL_GROUPS = new Set<any>();
 
-function isGroupableTool(value: unknown): value is InstanceType<typeof ToolExecutionComponent> {
-	return value instanceof ToolExecutionComponent && !NON_GROUPABLE_TOOL_NAMES.has(getToolName(value));
+function isGroupableTool(
+	value: unknown,
+): value is InstanceType<typeof ToolExecutionComponent> {
+	return (
+		value instanceof ToolExecutionComponent &&
+		!NON_GROUPABLE_TOOL_NAMES.has(getToolName(value))
+	);
 }
 
 class ToolGroupComponent extends Container {
@@ -1094,7 +1362,12 @@ class ToolGroupComponent extends Container {
 		this.cachedLines = undefined;
 	}
 
-	private statusSnapshot(): { key: string; pending: number; success: number; error: number } {
+	private statusSnapshot(): {
+		key: string;
+		pending: number;
+		success: number;
+		error: number;
+	} {
 		// Status counts + per-tool identity/expanded/partial bits detect membership
 		// and completion changes without walking full child render output. Child
 		// content changes still reach us via clearToolRenderCache → invalidate().
@@ -1102,12 +1375,16 @@ class ToolGroupComponent extends Container {
 		let idBits = "";
 		for (let i = 0; i < this.tools.length; i++) {
 			const tool = this.tools[i];
-			const id = typeof tool?.toolCallId === "string" ? tool.toolCallId : getToolName(tool);
-			const flags = (tool?.isPartial === true ? 1 : 0)
-				| (tool?.result?.isError ? 2 : 0)
-				| (tool?.expanded ? 4 : 0)
-				| (tool?.argsComplete ? 8 : 0)
-				| (tool?.executionStarted ? 16 : 0);
+			const id =
+				typeof tool?.toolCallId === "string"
+					? tool.toolCallId
+					: getToolName(tool);
+			const flags =
+				(tool?.isPartial === true ? 1 : 0) |
+				(tool?.result?.isError ? 2 : 0) |
+				(tool?.expanded ? 4 : 0) |
+				(tool?.argsComplete ? 8 : 0) |
+				(tool?.executionStarted ? 16 : 0);
 			idBits += `${id}:${flags},`;
 		}
 		return {
@@ -1131,6 +1408,7 @@ class ToolGroupComponent extends Container {
 		const tools = this.tools;
 		this.tools = [];
 		ACTIVE_TOOL_GROUPS.delete(this);
+		clearBlinkTimer({ state: this });
 		this.clearRenderCache();
 		return tools;
 	}
@@ -1152,21 +1430,34 @@ class ToolGroupComponent extends Container {
 
 	render(width: number): string[] {
 		if (this.tools.length === 0) return [];
-		const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+		const safeWidth = Number.isFinite(width)
+			? Math.max(1, Math.floor(width))
+			: 1;
 		// Fast path: settled groups with a valid memo skip ALL child walks.
 		// Child mutations mark dirty via clearToolRenderCache → invalidate().
 		if (
-			!this.dirty
-			&& this.cachedLines
-			&& this.cachedWidth === safeWidth
-			&& this.cachedEpoch === _toolBranchVisualEpoch
-			&& this.cachedMode === toolBackgroundMode
-			&& this.cachedExpanded === this.expanded
+			!this.dirty &&
+			this.cachedLines &&
+			this.cachedWidth === safeWidth &&
+			this.cachedEpoch === _toolBranchVisualEpoch &&
+			this.cachedMode === toolBackgroundMode &&
+			this.cachedExpanded === this.expanded
 		) {
 			return this.cachedLines;
 		}
 
 		const status = this.statusSnapshot();
+		if (status.pending > 0) {
+			setupBlinkTimer({
+				state: this,
+				invalidate: () => {
+					this.clearRenderCache();
+					this.tools[0]?.ui?.requestRender?.();
+				},
+			});
+		} else {
+			clearBlinkTimer({ state: this });
+		}
 		// Only memoize fully-settled groups. Pending groups must recompute so
 		// blink dots and live partial child content stay fresh. Long chats are
 		// almost entirely settled history, which is the expensive warm path.
@@ -1178,22 +1469,33 @@ class ToolGroupComponent extends Container {
 			error: status.error,
 		};
 
-		// Claude Code style: muted prose "Called Bash 3 times" — no bullets/tree/args.
+		// Claude Code style: one activity sentence, with live tool arguments below it.
 		// Mid-gray (not FG_DIM #505050) — readable on cc-my-pi-dark.
 		const CALL_GROUP_FG =
-			safeFgAnsi(getGlobalPiTheme() as Theme, "muted") ?? "\x1b[38;2;160;160;160m";
-		const phrase = formatCalledToolsPhrase(this.tools);
-		const statusBits = formatCollapsedStatusBits(counts);
-		const mutedPhrase = `${CALL_GROUP_FG}${phrase}${TRANSPARENT_RESET}`;
+			safeFgAnsi(getGlobalPiTheme() as Theme, "muted") ??
+			"\x1b[38;2;160;160;160m";
+		const phrase = formatClaudeToolsPhrase(this.tools);
+		const displayPhrase = status.pending > 0 ? `${phrase}…` : phrase;
+		const statusBits =
+			counts.error > 0 ? statusText("error", counts.error) : "";
+		const mutedPhrase = `${CALL_GROUP_FG}${displayPhrase}${TRANSPARENT_RESET}`;
 		const body = statusBits
 			? `${mutedPhrase}${TRANSPARENT_RESET} · ${statusBits}`
 			: mutedPhrase;
-		let line = ` ${body}`;
-		if (showCompactToolStatusDotsEnabled() && (status.pending > 0 || status.error > 0)) {
-			const overall: ToolStatus = status.error > 0 ? "error" : "pending";
-			line = ` ${groupStatusLight(overall)} ${body}`;
-		}
-		const lines = [" ".repeat(safeWidth), clampLineWidth(line, safeWidth)];
+		const overall: ToolStatus = status.error > 0 ? "error" : "pending";
+		const livePrefix =
+			status.pending > 0 ? `${groupStatusLight(overall)} ` : "";
+		const line = ` ${livePrefix}${body}`;
+		const liveDetails = renderLiveToolGroupDetails(
+			this.tools,
+			safeWidth,
+			CALL_GROUP_FG,
+		);
+		const lines = [
+			" ".repeat(safeWidth),
+			clampLineWidth(line, safeWidth),
+			...liveDetails,
+		];
 
 		// Final clamp already applied per-line above; avoid a second full pass.
 		if (canCache) {
@@ -1228,7 +1530,10 @@ function isIgnorableToolSeparator(value: unknown): boolean {
 			// must not split one visual tool group. Actual assistant text remains a
 			// hard boundary and preserves message ordering.
 			return !message.content.some(
-				(block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim(),
+				(block: any) =>
+					block?.type === "text" &&
+					typeof block.text === "string" &&
+					block.text.trim(),
 			);
 		}
 		const contentChildren = (value as any).contentContainer?.children;
@@ -1237,7 +1542,10 @@ function isIgnorableToolSeparator(value: unknown): boolean {
 	return false;
 }
 
-function findPreviousToolSibling(children: any[], startIndex: number): { child: any; index: number } | undefined {
+function findPreviousToolSibling(
+	children: any[],
+	startIndex: number,
+): { child: any; index: number } | undefined {
 	for (let index = startIndex; index >= 0; index--) {
 		const child = children[index];
 		if (isIgnorableToolSeparator(child)) continue;
@@ -1266,17 +1574,38 @@ function ungroupActiveToolGroups(): void {
 }
 
 function maybeGroupToolComponent(parent: any, component: any): void {
-	if (!toolGroupingEnabled() || !isGroupableTool(component) || isToolGroupComponent(parent)) return;
 	const children = parent?.children;
 	if (!Array.isArray(children)) return;
+	if (
+		isToolExecutionLike(component) &&
+		BUNDLED_TASK_TOOL_NAMES.has(getToolName(component))
+	) {
+		const index = children.indexOf(component);
+		if (index === -1) return;
+		const previousIsSpacer = index > 0 && children[index - 1] instanceof Spacer;
+		children.splice(
+			previousIsSpacer ? index - 1 : index,
+			previousIsSpacer ? 2 : 1,
+		);
+		delete (component as any)[COMPONENT_PARENT];
+		return;
+	}
+	if (
+		!toolGroupingEnabled() ||
+		!isGroupableTool(component) ||
+		isToolGroupComponent(parent)
+	)
+		return;
 	const index = children.indexOf(component);
 	if (index <= 0) return;
 	const previousEntry = findPreviousToolSibling(children, index - 1);
 	if (!previousEntry) return;
 	const previous = previousEntry.child;
 	if (isToolGroupComponent(previous)) {
-		children.splice(index, 1);
 		previous.addTool(component);
+		// Pi inserts Spacer components between sequential tool calls. Once calls
+		// collapse into one group, those separators become trailing blank rows.
+		children.splice(previousEntry.index + 1, index - previousEntry.index);
 		return;
 	}
 	if (isGroupableTool(previous)) {
@@ -1286,8 +1615,12 @@ function maybeGroupToolComponent(parent: any, component: any): void {
 		group.addTool(previous);
 		group.addTool(component);
 		(group as any)[COMPONENT_PARENT] = parent;
-		children[previousEntry.index] = group;
-		children.splice(index, 1);
+		// Replace both tools plus every separator between them with one compact row.
+		children.splice(
+			previousEntry.index,
+			index - previousEntry.index + 1,
+			group,
+		);
 	}
 }
 
@@ -1306,19 +1639,30 @@ function patchContainerParentTracking(): void {
 	const originalClear = proto.clear;
 	proto.addChild = function patchedAddChild(component: any) {
 		const result = originalAddChild.call(this, component);
-		if (component && typeof component === "object") component[COMPONENT_PARENT] = this;
+		if (component && typeof component === "object")
+			component[COMPONENT_PARENT] = this;
 		const groupHook = proto[PARENT_TRACKING_GROUP_HOOK];
 		if (typeof groupHook === "function") groupHook(this, component);
 		return result;
 	};
 	proto.removeChild = function patchedRemoveChild(component: any) {
 		const result = originalRemoveChild.call(this, component);
-		if (component && typeof component === "object" && component[COMPONENT_PARENT] === this) delete component[COMPONENT_PARENT];
+		if (
+			component &&
+			typeof component === "object" &&
+			component[COMPONENT_PARENT] === this
+		)
+			delete component[COMPONENT_PARENT];
 		return result;
 	};
 	proto.clear = function patchedClear() {
 		for (const child of this.children ?? []) {
-			if (child && typeof child === "object" && child[COMPONENT_PARENT] === this) delete child[COMPONENT_PARENT];
+			if (
+				child &&
+				typeof child === "object" &&
+				child[COMPONENT_PARENT] === this
+			)
+				delete child[COMPONENT_PARENT];
 		}
 		return originalClear.call(this);
 	};
@@ -1336,15 +1680,21 @@ function formatTodoOverlayLines(lines: string[], width: number): string[] {
 		firstContent = plain;
 		break;
 	}
-	if (!firstContent || !/^[●○]\s+Todos\s+—/.test(firstContent)) return lines;
+	if (!firstContent) return lines;
+	if (!/^[●○]\s+Todos\s+—/.test(firstContent)) return lines;
 	return lines.map((line) => {
 		const plain = stripAnsi(line);
-		if (/^[●○]\s+Todos\s+—/.test(plain)) return clampLineWidth(` ${line}`, width);
+		if (/^[●○]\s+Todos\s+—/.test(plain))
+			return clampLineWidth(` ${line}`, width);
 		// Magic Context emits `├─` / `└─` or bare `├` / `└`; strip any arm to bare tee/corner.
-		if (!/^[├└⎿]─?\s+[✓○◐✗●⏺⬤•]\s/.test(plain) && !/^[├└⎿]─?\s+/.test(plain)) return line;
+		if (!/^[├└⎿]─?\s+[✓○◐✗●⏺⬤•]\s/.test(plain) && !/^[├└⎿]─?\s+/.test(plain))
+			return line;
 		const withoutTodoHash = line.replace(/#(?=[A-Za-z0-9_-]+)/, "");
 		const bare = withoutTodoHash.replace(/([├└⎿])─/, "$1");
-		const colored = bare.replace(/[├└⎿]/, (branch) => `${currentToolBranchAnsi()}${branch}${TRANSPARENT_RESET}`);
+		const colored = bare.replace(
+			/[├└⎿]/,
+			(branch) => `${currentToolBranchAnsi()}${branch}${TRANSPARENT_RESET}`,
+		);
 		return clampLineWidth(` ${colored}`, width);
 	});
 }
@@ -1359,10 +1709,10 @@ function patchGlobalToolBorders(): void {
 			const cached = (this as any)[TOOL_RENDER_CACHE];
 			const branchKey = toolBranchRenderCacheKey();
 			if (
-				cached?.width === width
-				&& cached?.mode === toolBackgroundMode
-				&& cached?.branchKey === branchKey
-				&& cached?.branchEpoch === _toolBranchVisualEpoch
+				cached?.width === width &&
+				cached?.mode === toolBackgroundMode &&
+				cached?.branchKey === branchKey &&
+				cached?.branchEpoch === _toolBranchVisualEpoch
 			) {
 				return cached.lines;
 			}
@@ -1372,9 +1722,17 @@ function patchGlobalToolBorders(): void {
 		if (!Array.isArray(rendered) || rendered.length === 0) return rendered;
 		const todoOverlay = formatTodoOverlayLines(rendered, width);
 		if (!isToolExecutionLike(this)) return todoOverlay;
-		const branchCache = { branchKey: toolBranchRenderCacheKey(), branchEpoch: _toolBranchVisualEpoch };
+		const branchCache = {
+			branchKey: toolBranchRenderCacheKey(),
+			branchEpoch: _toolBranchVisualEpoch,
+		};
 		if (toolBackgroundMode === "default") {
-			(this as any)[TOOL_RENDER_CACHE] = { width, mode: toolBackgroundMode, lines: rendered, ...branchCache };
+			(this as any)[TOOL_RENDER_CACHE] = {
+				width,
+				mode: toolBackgroundMode,
+				lines: rendered,
+				...branchCache,
+			};
 			return rendered;
 		}
 
@@ -1384,9 +1742,16 @@ function patchGlobalToolBorders(): void {
 		while (end >= start && isBlankLine(rendered[end])) end--;
 		if (start > end) return rendered;
 
-		const { textLines, imageLines } = splitRenderedImageBlock(rendered.slice(start, end + 1));
+		const { textLines, imageLines } = splitRenderedImageBlock(
+			rendered.slice(start, end + 1),
+		);
 		if (imageLines.length > 0) {
-			(this as any)[TOOL_RENDER_CACHE] = { width, mode: toolBackgroundMode, lines: rendered, ...branchCache };
+			(this as any)[TOOL_RENDER_CACHE] = {
+				width,
+				mode: toolBackgroundMode,
+				lines: rendered,
+				...branchCache,
+			};
 			return rendered;
 		}
 		// Agent-family tools stay column-aligned with every other tool row — no extra
@@ -1400,13 +1765,21 @@ function patchGlobalToolBorders(): void {
 
 		if (toolBackgroundMode === "outlines") {
 			const ruleWidth = Math.max(1, width);
-			const framed = core.length > 0 ? [borderLine(ruleWidth), ...core, borderLine(ruleWidth)] : [];
+			const framed =
+				core.length > 0
+					? [borderLine(ruleWidth), ...core, borderLine(ruleWidth)]
+					: [];
 			result = [spacerLine, ...framed, ...imageLines];
 		} else {
 			result = [spacerLine, ...core, ...imageLines];
 		}
 
-		(this as any)[TOOL_RENDER_CACHE] = { width, mode: toolBackgroundMode, lines: result, ...branchCache };
+		(this as any)[TOOL_RENDER_CACHE] = {
+			width,
+			mode: toolBackgroundMode,
+			lines: result,
+			...branchCache,
+		};
 		return result;
 	};
 
@@ -1439,14 +1812,23 @@ function setExtraToolDetailMode(enabled: boolean): void {
 	writeSettingsKey("extraToolOutputExpanded", enabled);
 }
 
-function configuredKeyHint(binding: Parameters<typeof keyText>[0], fallbackKey: string, description: string): string {
+function configuredKeyHint(
+	binding: Parameters<typeof keyText>[0],
+	fallbackKey: string,
+	description: string,
+): string {
 	try {
 		if (keyText(binding).trim()) return keyHint(binding, description);
-	} catch { /* fall back below */ }
+	} catch {
+		/* fall back below */
+	}
 	return rawKeyHint(fallbackKey, description);
 }
 
-function expandHint(_theme: Theme, action: "expand" | "collapse" | "toggle" = "toggle"): string {
+function expandHint(
+	_theme: Theme,
+	action: "expand" | "collapse" | "toggle" = "toggle",
+): string {
 	return ` • ${configuredKeyHint("app.tools.expand", "ctrl+o", `to ${action}`)}`;
 }
 
@@ -1454,14 +1836,21 @@ function deepExpandHint(): string {
 	return ` • ${rawKeyHint("ctrl+shift+o", extraToolOutputExpanded ? "less detail" : "more detail")}`;
 }
 
-function toolOutputDetailHint(theme: Theme, expanded: boolean, hasMore = false): string {
+function toolOutputDetailHint(
+	theme: Theme,
+	expanded: boolean,
+	hasMore = false,
+): string {
 	if (!expanded) return expandHint(theme, "toggle");
 	const parts = [expandHint(theme, "collapse")];
 	if (hasMore || extraToolOutputExpanded) parts.push(deepExpandHint());
 	return parts.join("");
 }
 
-function clearStateKeys(state: Record<string, unknown> | undefined, ...keys: string[]): void {
+function clearStateKeys(
+	state: Record<string, unknown> | undefined,
+	...keys: string[]
+): void {
 	if (!state) return;
 	for (const key of keys) {
 		delete state[key];
@@ -1478,7 +1867,9 @@ function clearToolRenderCache(value: unknown): void {
 	if (isToolGroupComponent(parent)) parent.invalidate();
 }
 
-function unrefTimer(timer: ReturnType<typeof setTimeout> | null | undefined): void {
+function unrefTimer(
+	timer: ReturnType<typeof setTimeout> | null | undefined,
+): void {
 	(timer as any)?.unref?.();
 }
 
@@ -1490,9 +1881,15 @@ function safeInvalidate(ctx: any): void {
 	}
 }
 
-const ASSISTANT_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-assistant-message");
-const ASSISTANT_RENDER_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-assistant-message-render");
-const TOOL_EXECUTION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool-execution");
+const ASSISTANT_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-assistant-message",
+);
+const ASSISTANT_RENDER_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-assistant-message-render",
+);
+const TOOL_EXECUTION_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-tool-execution",
+);
 
 // Rendered-output cache for assistant/user/custom message components.
 // Keyed by (width, branch visual epoch, tool background mode). The epoch changes on
@@ -1508,23 +1905,29 @@ const TOOL_EXECUTION_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool
 //  - CustomMessageComponent rebuilds children only via rebuild(), which clears the cache.
 // The returned arrays are only ever spread-copied by Container.render (never mutated in place),
 // so sharing the cached array reference across renders is safe.
-const MESSAGE_RENDER_CACHE = Symbol.for("pi-claude-style-tools:message-render-cache");
+const MESSAGE_RENDER_CACHE = Symbol.for(
+	"pi-claude-style-tools:message-render-cache",
+);
 
 function messageRenderCacheHit(thisArg: any, width: number): string[] | null {
 	const cache = thisArg?.[MESSAGE_RENDER_CACHE];
 	if (
-		cache
-		&& cache.width === width
-		&& cache.epoch === _toolBranchVisualEpoch
-		&& cache.mode === toolBackgroundMode
-		&& Array.isArray(cache.lines)
+		cache &&
+		cache.width === width &&
+		cache.epoch === _toolBranchVisualEpoch &&
+		cache.mode === toolBackgroundMode &&
+		Array.isArray(cache.lines)
 	) {
 		return cache.lines;
 	}
 	return null;
 }
 
-function storeMessageRenderCache(thisArg: any, width: number, lines: string[]): string[] {
+function storeMessageRenderCache(
+	thisArg: any,
+	width: number,
+	lines: string[],
+): string[] {
 	if (thisArg && typeof thisArg === "object") {
 		thisArg[MESSAGE_RENDER_CACHE] = {
 			width,
@@ -1537,7 +1940,8 @@ function storeMessageRenderCache(thisArg: any, width: number, lines: string[]): 
 }
 
 function clearMessageRenderCache(thisArg: any): void {
-	if (thisArg && typeof thisArg === "object") thisArg[MESSAGE_RENDER_CACHE] = undefined;
+	if (thisArg && typeof thisArg === "object")
+		thisArg[MESSAGE_RENDER_CACHE] = undefined;
 }
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -1666,13 +2070,16 @@ function assistantMessageThinkingComplete(message: any): boolean {
 function hiddenThinkingSummaryForMessage(message: any): string {
 	// Per-message flags win over globals so a late render pass cannot keep
 	// "Thinking…" after thinking_end already stored duration on this message.
-	if ((message as any)?.[THINKING_ACTIVE_KEY]) return thinkingActiveSummaryText();
+	if ((message as any)?.[THINKING_ACTIVE_KEY])
+		return thinkingActiveSummaryText();
 	const stored = (message as any)?.[THINKING_DURATION_KEY];
-	const durationMs = typeof stored === "number"
-		? stored
-		: assistantMessageThinkingComplete(message) && typeof lastThinkingBlockDurationMs === "number"
-			? lastThinkingBlockDurationMs
-			: undefined;
+	const durationMs =
+		typeof stored === "number"
+			? stored
+			: assistantMessageThinkingComplete(message) &&
+					typeof lastThinkingBlockDurationMs === "number"
+				? lastThinkingBlockDurationMs
+				: undefined;
 	if (typeof durationMs === "number" && durationMs >= MIN_THINKING_SUMMARY_MS) {
 		return thoughtDurationSummaryText(durationMs);
 	}
@@ -1680,7 +2087,9 @@ function hiddenThinkingSummaryForMessage(message: any): string {
 	return thinkingActiveSummaryText();
 }
 
-function isHiddenThinkingPlaceholderText(child: unknown): child is InstanceType<typeof Text> {
+function isHiddenThinkingPlaceholderText(
+	child: unknown,
+): child is InstanceType<typeof Text> {
 	if (!(child instanceof Text)) return false;
 	const plain = stripAnsi(String((child as any).text ?? "")).trim();
 	if (/^[✻∴]\s*Thinking/i.test(plain)) return true;
@@ -1692,24 +2101,46 @@ function isHiddenThinkingPlaceholderText(child: unknown): child is InstanceType<
 }
 
 function messageHasThinkingContent(message: any): boolean {
-	return Array.isArray(message?.content)
-		&& message.content.some((block: any) => block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim());
+	return (
+		Array.isArray(message?.content) &&
+		message.content.some(
+			(block: any) =>
+				block?.type === "thinking" &&
+				typeof block.thinking === "string" &&
+				block.thinking.trim(),
+		)
+	);
 }
 
-function workedDurationText(ms: number, sessionTotalMs?: number, turns?: number): string {
+function workedDurationText(
+	ms: number,
+	sessionTotalMs?: number,
+	turns?: number,
+): string {
 	let text = `${WORKED_LINE_FG}✻ Turn took ${formatWorkedDuration(ms)}`;
-	if (typeof sessionTotalMs === "number" && typeof turns === "number" && turns > 0) {
+	if (
+		typeof sessionTotalMs === "number" &&
+		typeof turns === "number" &&
+		turns > 0
+	) {
 		text += ` (Total time ${formatSessionTotal(sessionTotalMs)} · ${pluralizeTurns(turns)})`;
 	}
 	return `${text}${RESET}`;
 }
 
-function inlineWorkedDurationText(ms: number, sessionTotalMs?: number, turns?: number): string {
+function inlineWorkedDurationText(
+	ms: number,
+	sessionTotalMs?: number,
+	turns?: number,
+): string {
 	return workedDurationText(ms, sessionTotalMs, turns);
 }
 
 function isWorkedDurationLine(line: string): boolean {
-	return line.includes(WORKED_DURATION_MARKER) && /^✻ Turn took [^\r\n]+$/.test(stripAnsi(line).trim());
+	return (
+		line.includes(WORKED_DURATION_MARKER) &&
+		/^✻ Turn took [^\r\n]+$/.test(stripAnsi(line).trim())
+	);
 }
 
 function stripWorkedDurationLine(text: string): string {
@@ -1724,17 +2155,39 @@ function stripWorkedDurationLine(text: string): string {
 function hasWorkedDurationLine(message: any): boolean {
 	if (!Array.isArray(message?.content)) return false;
 	return message.content.some((block: any) => {
-		if (block?.type !== "text" || typeof block.text !== "string" || !block.text.includes(WORKED_DURATION_MARKER)) return false;
+		if (
+			block?.type !== "text" ||
+			typeof block.text !== "string" ||
+			!block.text.includes(WORKED_DURATION_MARKER)
+		)
+			return false;
 		return block.text.split(/\r?\n/).some(isWorkedDurationLine);
 	});
 }
 
-function appendWorkedDurationLine(message: any, durationMs: number, sessionTotalMs?: number, turns?: number): void {
-	if (!message || message.role !== "assistant" || !Array.isArray(message.content)) return;
-	const textBlocks = message.content.filter((block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim());
+function appendWorkedDurationLine(
+	message: any,
+	durationMs: number,
+	sessionTotalMs?: number,
+	turns?: number,
+): void {
+	if (
+		!message ||
+		message.role !== "assistant" ||
+		!Array.isArray(message.content)
+	)
+		return;
+	const textBlocks = message.content.filter(
+		(block: any) =>
+			block?.type === "text" &&
+			typeof block.text === "string" &&
+			block.text.trim(),
+	);
 	const lastText = textBlocks[textBlocks.length - 1];
 	if (!lastText) return;
-	const text = lastText.text.includes(WORKED_DURATION_MARKER) ? stripWorkedDurationLine(lastText.text) : lastText.text;
+	const text = lastText.text.includes(WORKED_DURATION_MARKER)
+		? stripWorkedDurationLine(lastText.text)
+		: lastText.text;
 	lastText.text = `${text.trimEnd()}\n\n${inlineWorkedDurationText(durationMs, sessionTotalMs, turns)}`;
 }
 
@@ -1760,21 +2213,89 @@ const DISPLAY_MATH_DELIMITERS: MathDelimiter[] = [
 ];
 
 const MATH_COMMANDS: Record<string, string> = {
-	alpha: "α", beta: "β", gamma: "γ", Gamma: "Γ", delta: "δ", Delta: "Δ",
-	epsilon: "ε", varepsilon: "ε", zeta: "ζ", eta: "η", theta: "θ", Theta: "Θ",
-	vartheta: "ϑ", iota: "ι", kappa: "κ", lambda: "λ", Lambda: "Λ", mu: "μ",
-	nu: "ν", xi: "ξ", Xi: "Ξ", pi: "π", Pi: "Π", rho: "ρ", varrho: "ϱ",
-	sigma: "σ", Sigma: "Σ", tau: "τ", upsilon: "υ", Upsilon: "Υ", phi: "φ",
-	varphi: "φ", Phi: "Φ", chi: "χ", psi: "ψ", Psi: "Ψ", omega: "ω", Omega: "Ω",
-	pm: "±", mp: "∓", times: "×", cdot: "·", div: "÷", ast: "*", le: "≤", leq: "≤",
-	ge: "≥", geq: "≥", neq: "≠", ne: "≠", approx: "≈", sim: "∼", propto: "∝",
-	infty: "∞", partial: "∂", nabla: "∇", sum: "Σ", prod: "Π", int: "∫", sqrt: "√",
-	to: "→", rightarrow: "→", leftarrow: "←", leftrightarrow: "↔", in: "∈", notin: "∉",
-	cup: "∪", cap: "∩", subset: "⊂", subseteq: "⊆", superset: "⊃", superseteq: "⊇",
-	wedge: "∧", vee: "∨", forall: "∀", exists: "∃", emptyset: "∅", degree: "°",
+	alpha: "α",
+	beta: "β",
+	gamma: "γ",
+	Gamma: "Γ",
+	delta: "δ",
+	Delta: "Δ",
+	epsilon: "ε",
+	varepsilon: "ε",
+	zeta: "ζ",
+	eta: "η",
+	theta: "θ",
+	Theta: "Θ",
+	vartheta: "ϑ",
+	iota: "ι",
+	kappa: "κ",
+	lambda: "λ",
+	Lambda: "Λ",
+	mu: "μ",
+	nu: "ν",
+	xi: "ξ",
+	Xi: "Ξ",
+	pi: "π",
+	Pi: "Π",
+	rho: "ρ",
+	varrho: "ϱ",
+	sigma: "σ",
+	Sigma: "Σ",
+	tau: "τ",
+	upsilon: "υ",
+	Upsilon: "Υ",
+	phi: "φ",
+	varphi: "φ",
+	Phi: "Φ",
+	chi: "χ",
+	psi: "ψ",
+	Psi: "Ψ",
+	omega: "ω",
+	Omega: "Ω",
+	pm: "±",
+	mp: "∓",
+	times: "×",
+	cdot: "·",
+	div: "÷",
+	ast: "*",
+	le: "≤",
+	leq: "≤",
+	ge: "≥",
+	geq: "≥",
+	neq: "≠",
+	ne: "≠",
+	approx: "≈",
+	sim: "∼",
+	propto: "∝",
+	infty: "∞",
+	partial: "∂",
+	nabla: "∇",
+	sum: "Σ",
+	prod: "Π",
+	int: "∫",
+	sqrt: "√",
+	to: "→",
+	rightarrow: "→",
+	leftarrow: "←",
+	leftrightarrow: "↔",
+	in: "∈",
+	notin: "∉",
+	cup: "∪",
+	cap: "∩",
+	subset: "⊂",
+	subseteq: "⊆",
+	superset: "⊃",
+	superseteq: "⊇",
+	wedge: "∧",
+	vee: "∨",
+	forall: "∀",
+	exists: "∃",
+	emptyset: "∅",
+	degree: "°",
 };
 
-const COPY_SAFE_MARKDOWN_LINKS_FLAG = Symbol.for("pi-claude-style-tools:copy-safe-markdown-links");
+const COPY_SAFE_MARKDOWN_LINKS_FLAG = Symbol.for(
+	"pi-claude-style-tools:copy-safe-markdown-links",
+);
 
 function imagePasterEnabled(): boolean {
 	return readSettings().imagePasterEnabled !== false;
@@ -1812,11 +2333,14 @@ function copySafeMarkdownTheme(theme: MarkdownThemeLike): MarkdownThemeLike {
 		...theme,
 		link: (text: string) => stripAnsi(text),
 		linkUrl: (text: string) => stripAnsi(text),
-		listBullet: (marker: string) => renderAssistantListBullet(marker, listBullet),
+		listBullet: (marker: string) =>
+			renderAssistantListBullet(marker, listBullet),
 	};
 }
 
-function makeMarkdownLinksCopySafe(markdown: InstanceType<typeof Markdown>): void {
+function makeMarkdownLinksCopySafe(
+	markdown: InstanceType<typeof Markdown>,
+): void {
 	const markdownAny = markdown as any;
 	if (markdownAny[COPY_SAFE_MARKDOWN_LINKS_FLAG] || !markdownAny.theme) return;
 	markdownAny.theme = copySafeMarkdownTheme(markdownAny.theme);
@@ -1839,13 +2363,19 @@ function hasInlineMathMarkers(text: string): boolean {
 
 function replaceInlineMath(text: string): string {
 	if (!hasInlineMathMarkers(text)) return text;
-	const withParens = text.replace(/\\\(([\s\S]*?)\\\)/g, (_match, body: string) => {
-		return codeSpan(formatMathForDisplay(body, false));
-	});
-	return withParens.replace(/(^|[^\\])\$([^\n$]{1,200})\$/g, (match, prefix: string, body: string) => {
-		if (!looksLikeInlineMath(body)) return match;
-		return `${prefix}${codeSpan(formatMathForDisplay(body, false))}`;
-	});
+	const withParens = text.replace(
+		/\\\(([\s\S]*?)\\\)/g,
+		(_match, body: string) => {
+			return codeSpan(formatMathForDisplay(body, false));
+		},
+	);
+	return withParens.replace(
+		/(^|[^\\])\$([^\n$]{1,200})\$/g,
+		(match, prefix: string, body: string) => {
+			if (!looksLikeInlineMath(body)) return match;
+			return `${prefix}${codeSpan(formatMathForDisplay(body, false))}`;
+		},
+	);
 }
 
 interface MathBlock {
@@ -1855,7 +2385,10 @@ interface MathBlock {
 	endIndex: number;
 }
 
-function findNextDelimitedMathBlock(text: string, start: number): MathBlock | undefined {
+function findNextDelimitedMathBlock(
+	text: string,
+	start: number,
+): MathBlock | undefined {
 	let best: MathBlock | undefined;
 	for (const delimiter of DISPLAY_MATH_DELIMITERS) {
 		const index = text.indexOf(delimiter.open, start);
@@ -1864,7 +2397,12 @@ function findNextDelimitedMathBlock(text: string, start: number): MathBlock | un
 		const contentEnd = text.indexOf(delimiter.close, contentStart);
 		if (contentEnd === -1) continue;
 		if (!best || index < best.index) {
-			best = { index, contentStart, contentEnd, endIndex: contentEnd + delimiter.close.length };
+			best = {
+				index,
+				contentStart,
+				contentEnd,
+				endIndex: contentEnd + delimiter.close.length,
+			};
 		}
 	}
 	return best;
@@ -1874,7 +2412,10 @@ function looksLikeDisplayMath(text: string): boolean {
 	return /\\[A-Za-z]+|[_^=<>+*/|]/.test(text) && /[A-Za-z0-9}]/.test(text);
 }
 
-function findNextLooseBracketMathBlock(text: string, start: number): MathBlock | undefined {
+function findNextLooseBracketMathBlock(
+	text: string,
+	start: number,
+): MathBlock | undefined {
 	const openRe = /(^|\r?\n)[ \t]*\[[ \t]*(?:\r?\n)/g;
 	openRe.lastIndex = start;
 	let openMatch: RegExpExecArray | null;
@@ -1888,7 +2429,12 @@ function findNextLooseBracketMathBlock(text: string, start: number): MathBlock |
 		const contentEnd = closeMatch.index + closeMatch[1].length;
 		const raw = text.slice(contentStart, contentEnd).trim();
 		if (looksLikeDisplayMath(raw)) {
-			return { index, contentStart, contentEnd, endIndex: closeMatch.index + closeMatch[0].length };
+			return {
+				index,
+				contentStart,
+				contentEnd,
+				endIndex: closeMatch.index + closeMatch[0].length,
+			};
 		}
 		openRe.lastIndex = contentStart;
 	}
@@ -1896,16 +2442,27 @@ function findNextLooseBracketMathBlock(text: string, start: number): MathBlock |
 }
 
 function hasDisplayMathMarkers(text: string): boolean {
-	return text.includes("\\[") || text.includes("$$") || text.includes("\\begin{") || /(^|\n)[ \t]*\[[ \t]*(?:\r?\n)/.test(text);
+	return (
+		text.includes("\\[") ||
+		text.includes("$$") ||
+		text.includes("\\begin{") ||
+		/(^|\n)[ \t]*\[[ \t]*(?:\r?\n)/.test(text)
+	);
 }
 
 function shouldScanLooseBracketMath(text: string): boolean {
 	return text.length < 20_000 && /(^|\n)[ \t]*\[[ \t]*(?:\r?\n)/.test(text);
 }
 
-function findNextDisplayMathBlock(text: string, start: number, scanLoose: boolean): MathBlock | undefined {
+function findNextDisplayMathBlock(
+	text: string,
+	start: number,
+	scanLoose: boolean,
+): MathBlock | undefined {
 	const delimited = findNextDelimitedMathBlock(text, start);
-	const loose = scanLoose ? findNextLooseBracketMathBlock(text, start) : undefined;
+	const loose = scanLoose
+		? findNextLooseBracketMathBlock(text, start)
+		: undefined;
 	if (!delimited) return loose;
 	if (!loose) return delimited;
 	return loose.index < delimited.index ? loose : delimited;
@@ -1926,7 +2483,11 @@ function shouldFormatStandaloneMath(text: string): boolean {
 	// Whole assistant paragraphs must stay markdown; misclassifying them collapses newlines.
 	if (looksLikeMarkdownDocument(text)) return false;
 	if (plain.length > 600 || plain.split(/\r?\n/).length > 3) return false;
-	if (/\\(?:frac|dfrac|tfrac|sqrt|left|right|begin|end|partial|boldsymbol|bm|mathrm|mathbf|mathit|mathsf|mathtt|mathbb|sigma|epsilon|delta|gamma|Gamma|Delta|theta|Theta|pi|Pi|rho|varrho|tau|phi|varphi|Psi|psi|omega|Omega|alpha|beta|mu|nu|xi|chi|sum|prod|int|to|rightarrow|leftarrow|leftrightarrow|infty)/.test(plain)) {
+	if (
+		/\\(?:frac|dfrac|tfrac|sqrt|left|right|begin|end|partial|boldsymbol|bm|mathrm|mathbf|mathit|mathsf|mathtt|mathbb|sigma|epsilon|delta|gamma|Gamma|Delta|theta|Theta|pi|Pi|rho|varrho|tau|phi|varphi|Psi|psi|omega|Omega|alpha|beta|mu|nu|xi|chi|sum|prod|int|to|rightarrow|leftarrow|leftrightarrow|infty)/.test(
+			plain,
+		)
+	) {
 		return true;
 	}
 	// Paths like \opencode and prose with "=" are not math; require tight expression shape.
@@ -1934,13 +2495,25 @@ function shouldFormatStandaloneMath(text: string): boolean {
 	return !/[.!?]\s/.test(plain) && plain.length <= 240;
 }
 
-function appendMarkdownSegment(segments: ParagraphSegment[], text: string, theme: MarkdownThemeLike): void {
+function appendMarkdownSegment(
+	segments: ParagraphSegment[],
+	text: string,
+	theme: MarkdownThemeLike,
+): void {
 	if (!text.trim()) return;
-	const normalized = shouldFormatStandaloneMath(text) ? formatMathForDisplay(text, false) : replaceInlineMath(text);
-	segments.push({ kind: "markdown", md: new Markdown(normalized, 0, 0, theme) });
+	const normalized = shouldFormatStandaloneMath(text)
+		? formatMathForDisplay(text, false)
+		: replaceInlineMath(text);
+	segments.push({
+		kind: "markdown",
+		md: new Markdown(normalized, 0, 0, theme),
+	});
 }
 
-function buildParagraphSegments(text: string, theme: MarkdownThemeLike): ParagraphSegment[] {
+function buildParagraphSegments(
+	text: string,
+	theme: MarkdownThemeLike,
+): ParagraphSegment[] {
 	const segments: ParagraphSegment[] = [];
 	if (!hasDisplayMathMarkers(text)) {
 		appendMarkdownSegment(segments, text, theme);
@@ -1962,7 +2535,10 @@ function buildParagraphSegments(text: string, theme: MarkdownThemeLike): Paragra
 
 function replaceSimpleCommandGroups(text: string): string {
 	return text
-		.replace(/\\(?:text|mathrm|operatorname|mathbf|boldsymbol|bm|mathit|mathsf|mathtt)\{([^{}]*)\}/g, "$1")
+		.replace(
+			/\\(?:text|mathrm|operatorname|mathbf|boldsymbol|bm|mathit|mathsf|mathtt)\{([^{}]*)\}/g,
+			"$1",
+		)
 		.replace(/\\(?:boldsymbol|bm)\s+([A-Za-z])/g, "$1")
 		.replace(/\\mathbb\{R\}/g, "ℝ")
 		.replace(/\\mathbb\{N\}/g, "ℕ")
@@ -1971,7 +2547,10 @@ function replaceSimpleCommandGroups(text: string): string {
 		.replace(/\\mathbb\{C\}/g, "ℂ");
 }
 
-function readLatexGroup(text: string, start: number): { content: string; end: number } | undefined {
+function readLatexGroup(
+	text: string,
+	start: number,
+): { content: string; end: number } | undefined {
 	let open = start;
 	while (open < text.length && /\s/.test(text[open])) open++;
 	if (text[open] !== "{") return undefined;
@@ -1981,7 +2560,8 @@ function readLatexGroup(text: string, start: number): { content: string; end: nu
 		if (char === "{") depth++;
 		else if (char === "}") {
 			depth--;
-			if (depth === 0) return { content: text.slice(open + 1, index), end: index + 1 };
+			if (depth === 0)
+				return { content: text.slice(open + 1, index), end: index + 1 };
 		}
 	}
 	return undefined;
@@ -1991,14 +2571,18 @@ function replaceFractions(text: string): string {
 	let output = "";
 	let index = 0;
 	while (index < text.length) {
-		const command = ["\\frac", "\\dfrac", "\\tfrac"].find((candidate) => text.startsWith(candidate, index));
+		const command = ["\\frac", "\\dfrac", "\\tfrac"].find((candidate) =>
+			text.startsWith(candidate, index),
+		);
 		if (!command) {
 			output += text[index];
 			index++;
 			continue;
 		}
 		const numerator = readLatexGroup(text, index + command.length);
-		const denominator = numerator ? readLatexGroup(text, numerator.end) : undefined;
+		const denominator = numerator
+			? readLatexGroup(text, numerator.end)
+			: undefined;
 		if (!numerator || !denominator) {
 			output += text[index];
 			index++;
@@ -2011,7 +2595,10 @@ function replaceFractions(text: string): string {
 }
 
 function replaceMathCommands(text: string): string {
-	return text.replace(/\\([A-Za-z]+)/g, (match, name: string) => MATH_COMMANDS[name] ?? match);
+	return text.replace(
+		/\\([A-Za-z]+)/g,
+		(match, name: string) => MATH_COMMANDS[name] ?? match,
+	);
 }
 
 function formatMathForDisplay(raw: string, multiline = true): string {
@@ -2022,14 +2609,28 @@ function formatMathForDisplay(raw: string, multiline = true): string {
 	text = text.replace(/\\sqrt\s*\{([^{}]+)\}/g, "√($1)");
 	text = replaceMathCommands(text);
 	text = text.replace(/\\(?:left|right|big|Big|bigg|Bigg)/g, "");
-	text = text.replace(/_\{([^{}]+)\}/g, "_$1").replace(/\^\{([^{}]+)\}/g, "^$1");
-	text = text.replace(/[{}]/g, "").replace(/\\[,;!]/g, " ").replace(/\\ /g, " ");
-	text = text.replace(/[ \t]+/g, " ").replace(/\s*([=+\-×·÷<>≤≥≈≠|])\s*/g, " $1 ");
-	const lines = text.split(/\r?\n/).map((line) => line.replace(/[ \t]{2,}/g, " ").trim()).filter(Boolean);
+	text = text
+		.replace(/_\{([^{}]+)\}/g, "_$1")
+		.replace(/\^\{([^{}]+)\}/g, "^$1");
+	text = text
+		.replace(/[{}]/g, "")
+		.replace(/\\[,;!]/g, " ")
+		.replace(/\\ /g, " ");
+	text = text
+		.replace(/[ \t]+/g, " ")
+		.replace(/\s*([=+\-×·÷<>≤≥≈≠|])\s*/g, " $1 ");
+	const lines = text
+		.split(/\r?\n/)
+		.map((line) => line.replace(/[ \t]{2,}/g, " ").trim())
+		.filter(Boolean);
 	return multiline ? lines.join("\n") : lines.join(" ");
 }
 
-function renderMathBlock(raw: string, width: number, theme: MarkdownThemeLike): string[] {
+function renderMathBlock(
+	raw: string,
+	width: number,
+	theme: MarkdownThemeLike,
+): string[] {
 	const safeWidth = Math.max(12, width);
 	const formatted = formatMathForDisplay(raw, true) || raw;
 	return formatted
@@ -2058,7 +2659,9 @@ class DottedParagraph {
 
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-		const safeWidth = Number.isFinite(width) ? Math.max(0, Math.floor(width)) : 0;
+		const safeWidth = Number.isFinite(width)
+			? Math.max(0, Math.floor(width))
+			: 0;
 		if (safeWidth <= 0) {
 			this.cachedWidth = width;
 			this.cachedLines = [""];
@@ -2075,38 +2678,54 @@ class DottedParagraph {
 		const lines = this.segments.flatMap((segment) => {
 			return segment.kind === "math"
 				? renderMathBlock(segment.raw, contentWidth, this.markdownTheme)
-				: sanitizeRenderedTextBlockLines(segment.md.render(contentWidth), contentWidth);
+				: sanitizeRenderedTextBlockLines(
+						segment.md.render(contentWidth),
+						contentWidth,
+					);
 		});
-		const looksLikeTaskStatus = lines.some((line) => /\b(?:transcript:|No output\.|Wrapped up)/.test(stripAnsi(line)));
-		const displayLines = looksLikeTaskStatus ? lines.map(normalizeLeadingCheckGlyph) : lines;
+		const looksLikeTaskStatus = lines.some((line) =>
+			/\b(?:transcript:|No output\.|Wrapped up)/.test(stripAnsi(line)),
+		);
+		const displayLines = looksLikeTaskStatus
+			? lines.map(normalizeLeadingCheckGlyph)
+			: lines;
 		let dotPlaced = false;
-		const rendered = displayLines.map((line: string) => {
-			if (!stripAnsi(line).trim()) return `   ${line}`;
-			if (isCodeBoxChromeLine(line)) return `   ${line}`;
-			if (!dotPlaced) {
-				dotPlaced = true;
-				return ` ${STATUS_DOT_FILLED} ${line}`;
-			}
-			return `   ${line}`;
-		}).map((line) => {
-			const gap = safeWidth - visibleWidth(line);
-			return gap > 0 ? line + " ".repeat(gap) : gap < 0 ? truncateToWidth(line, safeWidth, "", false) : line;
-		});
+		const rendered = displayLines
+			.map((line: string) => {
+				if (!stripAnsi(line).trim()) return `   ${line}`;
+				if (isCodeBoxChromeLine(line)) return `   ${line}`;
+				if (!dotPlaced) {
+					dotPlaced = true;
+					return ` ${STATUS_DOT_FILLED} ${line}`;
+				}
+				return `   ${line}`;
+			})
+			.map((line) => {
+				const gap = safeWidth - visibleWidth(line);
+				return gap > 0
+					? line + " ".repeat(gap)
+					: gap < 0
+						? truncateToWidth(line, safeWidth, "", false)
+						: line;
+			});
 		this.cachedWidth = width;
 		this.cachedLines = rendered;
 		return rendered;
 	}
 }
 
-function replaceHiddenThinkingPlaceholders(container: { children?: any[] }, _message?: any): void {
+function replaceHiddenThinkingPlaceholders(
+	container: { children?: any[] },
+	_message?: any,
+): void {
 	if (!container?.children) return;
 	// Drop every thinking placeholder — user wants no thinking chrome at all.
 	for (let i = container.children.length - 1; i >= 0; i--) {
 		const child = container.children[i];
 		if (
-			child instanceof HiddenThinkingSummary
-			|| child instanceof ThinkingParagraph
-			|| isHiddenThinkingPlaceholderText(child)
+			child instanceof HiddenThinkingSummary ||
+			child instanceof ThinkingParagraph ||
+			isHiddenThinkingPlaceholderText(child)
 		) {
 			container.children.splice(i, 1);
 		}
@@ -2121,7 +2740,10 @@ function registerThinkingExpandWrapper(pi: ExtensionAPI): void {
 	const install = (ctx: any): void => {
 		if (ctx.mode !== "tui" || !ctx.hasUI) return;
 		const ui = ctx.ui as any;
-		if (!ui.__ccThinkingExpandWrapped && typeof ui.setToolsExpanded === "function") {
+		if (
+			!ui.__ccThinkingExpandWrapped &&
+			typeof ui.setToolsExpanded === "function"
+		) {
 			const original = ui.setToolsExpanded.bind(ui);
 			ui.setToolsExpanded = (expanded: boolean) => {
 				THINKING_BLOCKS_EXPANDED = !!expanded;
@@ -2168,7 +2790,8 @@ class ThinkingParagraph {
 			italic: wrap,
 			strikethrough: wrap,
 			underline: wrap,
-			highlightCode: (code: string, _lang?: string) => code.split("\n").map((line) => `${DIM_FG}${line}`),
+			highlightCode: (code: string, _lang?: string) =>
+				code.split("\n").map((line) => `${DIM_FG}${line}`),
 		};
 		const plainStyle: ConstructorParameters<typeof Markdown>[4] = {
 			italic: false,
@@ -2213,16 +2836,20 @@ function isSubagentHeaderLine(line: string): boolean {
 
 function isSubagentDetailLine(line: string): boolean {
 	const plain = stripAnsi(line).trimStart();
-	return plain.startsWith("⎿")
-		|| plain.startsWith("transcript:")
-		|| plain === "No output."
-		|| /^(?:Done|Wrapped up|Stopped|Error:|Aborted)\b/.test(plain);
+	return (
+		plain.startsWith("⎿") ||
+		plain.startsWith("transcript:") ||
+		plain === "No output." ||
+		/^(?:Done|Wrapped up|Stopped|Error:|Aborted)\b/.test(plain)
+	);
 }
 
 function cleanSubagentDetailLine(line: string): string {
 	const markerIndex = line.indexOf("⎿");
 	if (markerIndex !== -1) {
-		const prefixAnsi = (line.slice(0, markerIndex).match(ANSI_RE) ?? []).join("");
+		const prefixAnsi = (line.slice(0, markerIndex).match(ANSI_RE) ?? []).join(
+			"",
+		);
 		return `${prefixAnsi}${line.slice(markerIndex + 1).replace(/^\s+/, "")}`;
 	}
 	return line
@@ -2240,8 +2867,16 @@ function formatSubagentNotificationGroup(lines: string[]): string[] {
 	}
 
 	const metadata = rest.slice(0, detailStart);
-	const detailLines = rest.slice(detailStart).map(cleanSubagentDetailLine).filter((line) => stripAnsi(line).trim().length > 0);
-	const formattedDetails = withFinalBranchBlock(detailLines.join("\n"), undefined as any).split("\n").filter((line) => line.length > 0);
+	const detailLines = rest
+		.slice(detailStart)
+		.map(cleanSubagentDetailLine)
+		.filter((line) => stripAnsi(line).trim().length > 0);
+	const formattedDetails = withFinalBranchBlock(
+		detailLines.join("\n"),
+		undefined as any,
+	)
+		.split("\n")
+		.filter((line) => line.length > 0);
 	return [header, ...metadata, ...formattedDetails];
 }
 
@@ -2263,7 +2898,9 @@ function splitSubagentNotificationGroups(lines: string[]): string[][] {
 function frameToolLikeLines(lines: string[], width: number): string[] {
 	syncToolBackgroundMode();
 	const safeWidth = Math.max(1, width);
-	const core = trimRenderedBlankLines(lines).map((line) => clampLineWidth(line, safeWidth));
+	const core = trimRenderedBlankLines(lines).map((line) =>
+		clampLineWidth(line, safeWidth),
+	);
 	if (core.length === 0 || toolBackgroundMode === "default") return core;
 	const spacerLine = " ".repeat(safeWidth);
 	if (toolBackgroundMode === "outlines") {
@@ -2275,10 +2912,12 @@ function frameToolLikeLines(lines: string[], width: number): string[] {
 function formatSubagentNotification(lines: string[], width: number): string[] {
 	const core = trimRenderedBlankLines(lines).map(normalizeLeadingCheckGlyph);
 	if (core.length === 0) return lines;
-	const formatted = splitSubagentNotificationGroups(core).flatMap((group, index) => {
-		const groupLines = formatSubagentNotificationGroup(group);
-		return index === 0 ? groupLines : ["", ...groupLines];
-	});
+	const formatted = splitSubagentNotificationGroups(core).flatMap(
+		(group, index) => {
+			const groupLines = formatSubagentNotificationGroup(group);
+			return index === 0 ? groupLines : ["", ...groupLines];
+		},
+	);
 	const indented = formatted.map((line) => (line ? ` ${line}` : line));
 	return frameToolLikeLines(indented, width);
 }
@@ -2286,7 +2925,9 @@ function formatSubagentNotification(lines: string[], width: number): string[] {
 const SHIFT_ENTER_NEWLINE_FEATURE = "cc-shift-enter-newline";
 /** Only on the outermost factory we own — not copied when others wrap us. */
 const SHIFT_ENTER_OUTER = Symbol.for("cc-my-pi:shift-enter-outer");
-const SHIFT_ENTER_INSTALL_GENERATION = Symbol.for("cc-my-pi:shift-enter-install-generation");
+const SHIFT_ENTER_INSTALL_GENERATION = Symbol.for(
+	"cc-my-pi:shift-enter-install-generation",
+);
 
 function nextShiftEnterInstallGeneration(): number {
 	const current = (globalThis as any)[SHIFT_ENTER_INSTALL_GENERATION];
@@ -2300,9 +2941,15 @@ function isCurrentShiftEnterInstallGeneration(generation: number): boolean {
 }
 
 /** True when input should insert a newline, not submit/follow-up. */
-function isShiftEnterNewlineData(data: string, keybindings?: { matches?: (d: string, id: string) => boolean }): boolean {
+function isShiftEnterNewlineData(
+	data: string,
+	keybindings?: { matches?: (d: string, id: string) => boolean },
+): boolean {
 	if (!data) return false;
-	if (typeof keybindings?.matches === "function" && keybindings.matches(data, "tui.input.newLine")) {
+	if (
+		typeof keybindings?.matches === "function" &&
+		keybindings.matches(data, "tui.input.newLine")
+	) {
 		return true;
 	}
 	// Ghostty historical: shift+enter=text:\x1b\r — without Kitty this is alt+enter/followUp.
@@ -2313,10 +2960,21 @@ function isShiftEnterNewlineData(data: string, keybindings?: { matches?: (d: str
 		// Do not force — bare LF can be submit without Kitty.
 	}
 	// CSI u / modifyOtherKeys Shift+Enter (Ghostty keybind text:\x1b[13;2u)
-	if (data === "\x1b[13;2u" || data === "\x1b[27;2;13~" || data === "\x1b[13;2~") return true;
-	if (typeof data === "string" && /^\x1b\[13;\d*u$/.test(data) && data.includes(";2")) return true;
+	if (
+		data === "\x1b[13;2u" ||
+		data === "\x1b[27;2;13~" ||
+		data === "\x1b[13;2~"
+	)
+		return true;
+	if (
+		typeof data === "string" &&
+		/^\x1b\[13;\d*u$/.test(data) &&
+		data.includes(";2")
+	)
+		return true;
 	// Kitty CSI-u with event type / associated text suffixes
-	if (typeof data === "string" && /^\x1b\[13;2(?::\d+)?u/.test(data)) return true;
+	if (typeof data === "string" && /^\x1b\[13;2(?::\d+)?u/.test(data))
+		return true;
 	if (typeof data === "string" && data.startsWith("\x1b[13;2u")) return true;
 	// modifyOtherKeys form with extra junk
 	if (typeof data === "string" && data.includes("\x1b[27;2;13~")) return true;
@@ -2338,8 +2996,12 @@ function insertEditorNewline(editor: any, tui?: any): boolean {
 	try {
 		const getText = editor?.getText?.bind(editor);
 		const setText = editor?.setText?.bind(editor);
-		const getCursor = editor?.getCursor?.bind(editor) ?? editor?.getCursorPosition?.bind(editor);
-		const setCursor = editor?.setCursor?.bind(editor) ?? editor?.setCursorPosition?.bind(editor);
+		const getCursor =
+			editor?.getCursor?.bind(editor) ??
+			editor?.getCursorPosition?.bind(editor);
+		const setCursor =
+			editor?.setCursor?.bind(editor) ??
+			editor?.setCursorPosition?.bind(editor);
 		if (typeof getText === "function" && typeof setText === "function") {
 			const text = String(getText() ?? "");
 			const cursor =
@@ -2391,7 +3053,8 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 
 		const factory = ((tui: any, theme: any, keybindings: any) => {
 			const editor =
-				previous?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
+				previous?.(tui, theme, keybindings) ??
+				new CustomEditor(tui, theme, keybindings);
 			const prevHandle = editor.handleInput.bind(editor);
 
 			editor.handleInput = (data: string): void => {
@@ -2404,7 +3067,10 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 			return editor;
 		}) as any;
 		factory[SHIFT_ENTER_OUTER] = true;
-		factory[EDITOR_FEATURES_SYMBOL] = new Set([...features, SHIFT_ENTER_NEWLINE_FEATURE]);
+		factory[EDITOR_FEATURES_SYMBOL] = new Set([
+			...features,
+			SHIFT_ENTER_NEWLINE_FEATURE,
+		]);
 		ctx.ui.setEditorComponent(factory);
 	};
 
@@ -2418,7 +3084,8 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 					if (
 						generation === installGeneration &&
 						isCurrentShiftEnterInstallGeneration(generation)
-					) install(ctx);
+					)
+						install(ctx);
 				});
 				continue;
 			}
@@ -2427,7 +3094,8 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 				if (
 					generation === installGeneration &&
 					isCurrentShiftEnterInstallGeneration(generation)
-				) install(ctx);
+				)
+					install(ctx);
 			}, ms);
 			installTimers.add(timer);
 		}
@@ -2444,7 +3112,9 @@ function patchSkillInvocationRender(): void {
 	if (proto[SKILL_INVOCATION_PATCH_FLAG]) return;
 	const originalUpdate = proto.updateDisplay;
 	if (typeof originalUpdate !== "function") return;
-	proto.updateDisplay = function patchedSkillInvocationUpdateDisplay(this: any) {
+	proto.updateDisplay = function patchedSkillInvocationUpdateDisplay(
+		this: any,
+	) {
 		try {
 			this.clear?.();
 			const block = this.skillBlock;
@@ -2459,7 +3129,8 @@ function patchSkillInvocationRender(): void {
 				const content = String(block?.content ?? "");
 				this.addChild?.(
 					new Markdown(header + content, 0, 0, mdTheme, {
-						color: (text: string) => themeFgSafe(this, "customMessageText", text),
+						color: (text: string) =>
+							themeFgSafe(this, "customMessageText", text),
 					}),
 				);
 				return;
@@ -2537,7 +3208,12 @@ function stripBackgroundAnsi(text: string): string {
 				i += mode === 2 ? 4 : mode === 5 ? 2 : 0;
 				continue;
 			}
-			if (code === 49 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107)) continue;
+			if (
+				code === 49 ||
+				(code >= 40 && code <= 47) ||
+				(code >= 100 && code <= 107)
+			)
+				continue;
 			kept.push(params[i]);
 		}
 		return kept.length === 0 ? "" : `\x1b[${kept.join(";")}m`;
@@ -2563,10 +3239,16 @@ function trimAnsiRight(text: string): string {
 }
 
 function cleanUserMessageLine(line: string): string {
-	return trimAnsiLeft(trimAnsiRight(stripBackgroundAnsi(stripOsc133Zones(line))));
+	return trimAnsiLeft(
+		trimAnsiRight(stripBackgroundAnsi(stripOsc133Zones(line))),
+	);
 }
 
-function claudeUserMessageLine(line: string, width: number, first: boolean): string {
+function claudeUserMessageLine(
+	line: string,
+	width: number,
+	first: boolean,
+): string {
 	return renderClaudeUserMessageLine({
 		line,
 		width,
@@ -2581,7 +3263,10 @@ function claudeUserMessageLine(line: string, width: number, first: boolean): str
 	});
 }
 
-function visitMarkdownDescendants(root: unknown, visit: (md: InstanceType<typeof Markdown>) => void): void {
+function visitMarkdownDescendants(
+	root: unknown,
+	visit: (md: InstanceType<typeof Markdown>) => void,
+): void {
 	if (!root || typeof root !== "object") return;
 	const node = root as { children?: unknown[] };
 	for (const child of node.children ?? []) {
@@ -2609,26 +3294,34 @@ function patchUserMessageRender(): void {
 		const messageWidth = Math.max(1, width);
 		const contentWidth = Math.max(1, messageWidth - 2);
 		const originalLines = originalRender.call(this, contentWidth);
-		if (!Array.isArray(originalLines) || originalLines.length === 0) return originalLines;
-		const lines = stripAttachedImagePathsBlock(
-			trimUserMessagePadding(
-				originalLines,
+		if (!Array.isArray(originalLines) || originalLines.length === 0)
+			return originalLines;
+		const lines = normalizeClaudeUserContextBranches(
+			stripAttachedImagePathsBlock(
+				trimUserMessagePadding(originalLines, (line) =>
+					stripAnsi(cleanUserMessageLine(line)),
+				),
 				(line) => stripAnsi(cleanUserMessageLine(line)),
 			),
-			(line) => stripAnsi(cleanUserMessageLine(line)),
 		);
 		if (lines.length === 0) return originalLines;
 		const rendered = lines.map((line: string, index: number) =>
 			claudeUserMessageLine(line, messageWidth, index === 0),
 		);
 		const clamped = rendered.map((line) => clampLineWidth(line, messageWidth));
-		return storeMessageRenderCache(this, width, applyTerminalCopyZones(clamped));
+		return storeMessageRenderCache(
+			this,
+			width,
+			applyTerminalCopyZones(clamped),
+		);
 	};
 	proto[USER_MESSAGE_PATCH_FLAG] = true;
 }
 
 const BASH_EXECUTION_PATCH_FLAG = Symbol.for("cc-my-pi:bash-execution-render");
-const BASH_EXECUTION_RENDER_CACHE = Symbol.for("cc-my-pi:bash-execution-render-cache");
+const BASH_EXECUTION_RENDER_CACHE = Symbol.for(
+	"cc-my-pi:bash-execution-render-cache",
+);
 const BASH_RUNNING_TAIL_LIMIT = 20;
 
 function wrapPlainLine(line: string, width: number): string[] {
@@ -2663,10 +3356,10 @@ function patchBashExecutionRender(): void {
 		if (this.status !== "running") {
 			const cached = (this as any)[BASH_EXECUTION_RENDER_CACHE];
 			if (
-				cached
-				&& cached.width === width
-				&& cached.count === this.outputLines.length
-				&& cached.status === this.status
+				cached &&
+				cached.width === width &&
+				cached.count === this.outputLines.length &&
+				cached.status === this.status
 			) {
 				return cached.lines;
 			}
@@ -2757,11 +3450,14 @@ function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
 			(previous as any)?.[EDITOR_FEATURES_SYMBOL] ?? new Set();
 		if (features.has(PROMPT_GLYPH_FEATURE)) return;
 		const factory = ((tui: any, theme: any, keybindings: any) => {
-			const editor = previous?.(tui, theme, keybindings) ?? new CustomEditor(tui, theme, keybindings);
+			const editor =
+				previous?.(tui, theme, keybindings) ??
+				new CustomEditor(tui, theme, keybindings);
 			const originalRender = editor.render.bind(editor);
 			editor.render = (width: number): string[] => {
 				const lines = originalRender(width);
-				if (!Array.isArray(lines) || lines.length < 3 || width < 2) return lines;
+				if (!Array.isArray(lines) || lines.length < 3 || width < 2)
+					return lines;
 				// Skip when the prototype patch (or a nested wrapper) already drew it —
 				// either the `❯` chevron or the `!` bash-mode glyph (recognized by its
 				// leading ANSI color code, since an undecorated bash draft starts with
@@ -2769,7 +3465,8 @@ function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
 				const rawLine1 = lines[1] ?? "";
 				const plainLine1 = stripAnsi(rawLine1).trimStart();
 				const alreadyDecorated =
-					plainLine1.startsWith("❯") || (plainLine1.startsWith("! ") && rawLine1.startsWith("\x1b"));
+					plainLine1.startsWith("❯") ||
+					(plainLine1.startsWith("! ") && rawLine1.startsWith("\x1b"));
 				if (alreadyDecorated) return lines;
 				const paddingX = (editor as any).getPaddingX?.() ?? 0;
 				lines[1] = prefixEditorPromptLine(
@@ -2793,7 +3490,10 @@ function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
 			};
 			return editor;
 		}) as any;
-		factory[EDITOR_FEATURES_SYMBOL] = new Set([...features, PROMPT_GLYPH_FEATURE]);
+		factory[EDITOR_FEATURES_SYMBOL] = new Set([
+			...features,
+			PROMPT_GLYPH_FEATURE,
+		]);
 		ctx.ui.setEditorComponent(factory);
 	};
 	const installLate = (ctx: any): void => {
@@ -2810,7 +3510,10 @@ function patchAssistantMessages(): void {
 	const proto = AssistantMessageComponent.prototype as any;
 	if (proto[ASSISTANT_PATCH_FLAG]) return;
 	const originalRender = proto.render;
-	if (typeof originalRender === "function" && !proto[ASSISTANT_RENDER_PATCH_FLAG]) {
+	if (
+		typeof originalRender === "function" &&
+		!proto[ASSISTANT_RENDER_PATCH_FLAG]
+	) {
 		proto.render = function patchedAssistantMessageRender(width: number) {
 			const cached = messageRenderCacheHit(this, width);
 			if (cached) return cached;
@@ -2821,7 +3524,11 @@ function patchAssistantMessages(): void {
 				// caching the rendered output to avoid re-rendering stable children.
 				return storeMessageRenderCache(this, width, lines);
 			}
-			return storeMessageRenderCache(this, width, applyTerminalCopyZones(lines));
+			return storeMessageRenderCache(
+				this,
+				width,
+				applyTerminalCopyZones(lines),
+			);
 		};
 		proto[ASSISTANT_RENDER_PATCH_FLAG] = true;
 	}
@@ -2878,22 +3585,44 @@ function patchAssistantMessages(): void {
 		// baked into the message text at message_end; this child is just a fallback
 		// for re-renders where that baked text isn't present.
 		const isFinalAssistantMessage = message.stopReason === "stop";
-		const workedDuration = typeof explicitDuration === "number" ? explicitDuration : undefined;
-		const workedSessionTotal = typeof explicitSessionTotal === "number"
-			? explicitSessionTotal
-			: typeof sessionStartMs === "number"
-				? Date.now() - sessionStartMs
-				: undefined;
-		const workedTurns = typeof explicitTurns === "number" ? explicitTurns : userTurnCount;
-		const hasAssistantText = message.content.some((block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim());
-		if (typeof workedDuration === "number" && isFinalAssistantMessage && hasAssistantText && !hasWorkedDurationLine(message)) {
-			container.children.push(new Spacer(1), new Text(workedDurationText(workedDuration, workedSessionTotal, workedTurns), 1, 0));
+		const workedDuration =
+			typeof explicitDuration === "number" ? explicitDuration : undefined;
+		const workedSessionTotal =
+			typeof explicitSessionTotal === "number"
+				? explicitSessionTotal
+				: typeof sessionStartMs === "number"
+					? Date.now() - sessionStartMs
+					: undefined;
+		const workedTurns =
+			typeof explicitTurns === "number" ? explicitTurns : userTurnCount;
+		const hasAssistantText = message.content.some(
+			(block: any) =>
+				block?.type === "text" &&
+				typeof block.text === "string" &&
+				block.text.trim(),
+		);
+		if (
+			typeof workedDuration === "number" &&
+			isFinalAssistantMessage &&
+			hasAssistantText &&
+			!hasWorkedDurationLine(message)
+		) {
+			container.children.push(
+				new Spacer(1),
+				new Text(
+					workedDurationText(workedDuration, workedSessionTotal, workedTurns),
+					1,
+					0,
+				),
+			);
 		}
 	};
 	proto[ASSISTANT_PATCH_FLAG] = true;
 }
 
-const TOOL_BG_PATCH_FLAG = Symbol.for("pi-claude-style-tools:patched-tool-bg-sync");
+const TOOL_BG_PATCH_FLAG = Symbol.for(
+	"pi-claude-style-tools:patched-tool-bg-sync",
+);
 
 function patchToolExecutionBackgroundSync(): void {
 	const proto = ToolExecutionComponent.prototype as any;
@@ -2922,7 +3651,9 @@ function syncLiveToolRenderState(component: any): void {
 	};
 	syncToolCallStatus(ctxLike);
 	if (component?.isPartial === true && component?.result) {
-		const raw = getTextContent(component.result).replace(/\r\n/g, "\n").trimEnd();
+		const raw = getTextContent(component.result)
+			.replace(/\r\n/g, "\n")
+			.trimEnd();
 		// tailLimit=0 → count-only (no line materialization) so huge bash tails stay cheap.
 		state._liveLineCount = collectNonEmptyLines(raw, 0).total;
 	} else if (component?.isPartial !== true) {
@@ -2951,7 +3682,11 @@ function patchToolRenderCacheInvalidation(): void {
 		if (typeof original !== "function") continue;
 		proto[method] = function patchedToolMutation(...args: any[]) {
 			clearToolRenderCache(this);
-			if (method === "updateDisplay" || method === "updateResult" || method === "invalidate") {
+			if (
+				method === "updateDisplay" ||
+				method === "updateResult" ||
+				method === "invalidate"
+			) {
 				syncLiveToolRenderState(this);
 			}
 			const result = original.apply(this, args);
@@ -2964,18 +3699,34 @@ function patchToolRenderCacheInvalidation(): void {
 }
 
 function deleteRenderedKittyImages(component: any): void {
-	if (!process.stdout.isTTY || getCapabilities().images !== "kitty" || !Array.isArray(component.imageComponents) || component.imageComponents.length === 0) return;
-	try { process.stdout.write(deleteAllKittyImages()); } catch { /* noop */ }
+	if (
+		!process.stdout.isTTY ||
+		getCapabilities().images !== "kitty" ||
+		!Array.isArray(component.imageComponents) ||
+		component.imageComponents.length === 0
+	)
+		return;
+	try {
+		process.stdout.write(deleteAllKittyImages());
+	} catch {
+		/* noop */
+	}
 }
 
 function removeImageChildren(component: any): void {
 	deleteRenderedKittyImages(component);
 	const children = [
-		...(Array.isArray(component.imageComponents) ? component.imageComponents : []),
+		...(Array.isArray(component.imageComponents)
+			? component.imageComponents
+			: []),
 		...(Array.isArray(component.imageSpacers) ? component.imageSpacers : []),
 	];
 	for (const child of children) {
-		try { component.removeChild?.(child); } catch { /* noop */ }
+		try {
+			component.removeChild?.(child);
+		} catch {
+			/* noop */
+		}
 	}
 	component.imageComponents = [];
 	component.imageSpacers = [];
@@ -2988,7 +3739,9 @@ function patchReadImageExpansion(): void {
 	if (typeof originalUpdateDisplay !== "function") return;
 	proto.updateDisplay = function patchedReadImageUpdateDisplay(...args: any[]) {
 		const result = originalUpdateDisplay.apply(this, args);
-		const hasImage = Array.isArray(this.result?.content) && this.result.content.some((block: any) => block?.type === "image");
+		const hasImage =
+			Array.isArray(this.result?.content) &&
+			this.result.content.some((block: any) => block?.type === "image");
 		if (this.toolName === "read" && hasImage && this.expanded !== true) {
 			removeImageChildren(this);
 			clearToolRenderCache(this);
@@ -3008,7 +3761,10 @@ function patchToolExecutionRenderers(): void {
 
 	if (typeof originalHasRendererDefinition === "function") {
 		proto.hasRendererDefinition = function patchedHasRendererDefinition() {
-			return originalHasRendererDefinition.call(this) || shouldUseGenericToolRenderer(this?.toolName);
+			return (
+				originalHasRendererDefinition.call(this) ||
+				shouldUseGenericToolRenderer(this?.toolName)
+			);
 		};
 	}
 
@@ -3016,25 +3772,37 @@ function patchToolExecutionRenderers(): void {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "apply_patch") {
 			return (args: any, theme: Theme, ctx: any) =>
-				renderApplyPatchCall(args, theme, ctx, (path: string) => shortPath(ctx.cwd ?? process.cwd(), path));
+				renderApplyPatchCall(args, theme, ctx, (path: string) =>
+					shortPath(ctx.cwd ?? process.cwd(), path),
+				);
 		}
 		if (shouldUseGenericToolRenderer(toolName)) {
-			return (args: any, theme: Theme, ctx: any) => renderGenericToolCall(toolName, args, theme, ctx);
+			return (args: any, theme: Theme, ctx: any) =>
+				renderGenericToolCall(toolName, args, theme, ctx);
 		}
-		return typeof originalGetCallRenderer === "function" ? originalGetCallRenderer.call(this) : undefined;
+		return typeof originalGetCallRenderer === "function"
+			? originalGetCallRenderer.call(this)
+			: undefined;
 	};
 
 	proto.getResultRenderer = function patchedGetResultRenderer() {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "apply_patch") {
 			return (result: any, options: any, theme: Theme, ctx: any) =>
-				renderApplyPatchResult({ content: result.content, details: result.details }, options.isPartial, theme, ctx);
+				renderApplyPatchResult(
+					{ content: result.content, details: result.details },
+					options.isPartial,
+					theme,
+					ctx,
+				);
 		}
 		if (shouldUseGenericToolRenderer(toolName)) {
 			return (result: any, options: any, theme: Theme, ctx: any) =>
 				renderGenericToolResult(toolName, result, options, theme, ctx);
 		}
-		return typeof originalGetResultRenderer === "function" ? originalGetResultRenderer.call(this) : undefined;
+		return typeof originalGetResultRenderer === "function"
+			? originalGetResultRenderer.call(this)
+			: undefined;
 	};
 
 	proto[TOOL_EXECUTION_PATCH_FLAG] = true;
@@ -3056,21 +3824,38 @@ function isBlinkOn(): boolean {
 	return Math.floor(Date.now() / 500) % 2 === 0;
 }
 
-function toolHeader(tool: string, summary: string, theme: Theme, prefix = "", trailing = ""): string {
+function toolHeader(
+	tool: string,
+	summary: string,
+	theme: Theme,
+	prefix = "",
+	trailing = "",
+): string {
 	applyThemePaletteIfNeeded(theme);
 	const label = theme.fg("toolTitle", theme.bold(tool));
 	// Drop summary when it only repeats the tool title (ansi-stripped).
-	const summaryText = typeof summary === "string" ? stripAnsi(summary).trim() : "";
+	const summaryText =
+		typeof summary === "string" ? stripAnsi(summary).trim() : "";
 	const toolText = stripAnsi(tool).trim();
-	const usefulSummary = summaryText && summaryText.toLowerCase() !== toolText.toLowerCase() ? summary : "";
-	const body = usefulSummary
-		? `${label} ${WRAP_MARK}${theme.fg("accent", usefulSummary)}`
-		: label;
+	const usefulSummary =
+		summaryText && summaryText.toLowerCase() !== toolText.toLowerCase()
+			? summary
+			: "";
+	const plainLabel = formatClaudeToolCallLabel(toolText, summaryText);
+	const body =
+		usefulSummary && plainLabel !== toolText
+			? `${label}(${WRAP_MARK}${theme.fg("accent", usefulSummary)})`
+			: label;
 	return trailing ? `${prefix}${body}${trailing}` : `${prefix}${body}`;
 }
 
 /** Claude Code style: Skill(name) — no space between label and parens. */
-function skillHeader(skillName: string, theme: Theme, prefix = "", trailing = ""): string {
+function skillHeader(
+	skillName: string,
+	theme: Theme,
+	prefix = "",
+	trailing = "",
+): string {
 	applyThemePaletteIfNeeded(theme);
 	const body =
 		theme.fg("toolTitle", theme.bold("Skill")) +
@@ -3078,14 +3863,45 @@ function skillHeader(skillName: string, theme: Theme, prefix = "", trailing = ""
 	return trailing ? `${prefix}${body}${trailing}` : `${prefix}${body}`;
 }
 
+function activityToolCallText(
+	activity: {
+		active: string;
+		past: string;
+		count: number;
+		noun: string;
+		plural: string;
+		detail?: string;
+	},
+	theme: Theme,
+	ctx: any,
+): string {
+	const pending = ctx?.state?._toolStatus === "pending";
+	const action = pending ? activity.active : activity.past;
+	const noun = activity.count === 1 ? activity.noun : activity.plural;
+	const label = `${action} ${activity.count} ${noun}${pending ? "…" : ""}`;
+	const header = toolHeader(
+		label,
+		"",
+		theme,
+		toolStatusDot(ctx, theme),
+		liveLineCountTrailing(ctx, theme),
+	);
+	if (!activity.detail) return header;
+	return `${header}\n${withBranch(theme.fg("muted", activity.detail), theme)}`;
+}
+
 function liveLineCountTrailing(ctx: any, theme: Theme): string {
 	if (ctx?.isPartial !== true) return "";
 	const count = ctx?.state?._liveLineCount;
-	if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) return "";
+	if (typeof count !== "number" || !Number.isFinite(count) || count <= 0)
+		return "";
 	return ` ${theme.fg("muted", `(${lineCountLabel(count)})`)}`;
 }
 
-function setToolStatus(ctx: any, status: "pending" | "success" | "error" | "idle"): void {
+function setToolStatus(
+	ctx: any,
+	status: "pending" | "success" | "error" | "idle",
+): void {
 	if (ctx?.state) ctx.state._toolStatus = status;
 }
 
@@ -3119,16 +3935,29 @@ function shouldRevealCallArgs(ctx: any): boolean {
 	if (ctx?.argsComplete === true || ctx?.executionStarted === true) return true;
 	const args = ctx?.args;
 	if (!args || typeof args !== "object") return false;
-	return Object.keys(args).some((key) => args[key] !== undefined && args[key] !== null && args[key] !== "");
+	return Object.keys(args).some(
+		(key) => args[key] !== undefined && args[key] !== null && args[key] !== "",
+	);
 }
 
-function stableCallSummary(ctx: any, key: string, build: () => string, reveal = shouldRevealCallArgs(ctx)): string {
+function stableCallSummary(
+	ctx: any,
+	key: string,
+	build: () => string,
+	reveal = shouldRevealCallArgs(ctx),
+): string {
 	const state = ctx?.state;
 	const cached = state?.[key];
 	const completeKey = `${key}Complete`;
 	if (!reveal) return typeof cached === "string" ? cached : "";
-	if (ctx?.argsComplete === true && state?.[completeKey] === true && typeof cached === "string") return cached;
-	if (!shouldRevealCallArgs(ctx) && typeof cached === "string" && cached) return cached;
+	if (
+		ctx?.argsComplete === true &&
+		state?.[completeKey] === true &&
+		typeof cached === "string"
+	)
+		return cached;
+	if (!shouldRevealCallArgs(ctx) && typeof cached === "string" && cached)
+		return cached;
 	const summary = build();
 	if (state) {
 		state[key] = summary;
@@ -3167,7 +3996,8 @@ const PRESERVED_BASH_PREVIEWS = new Set<string>();
 const BASH_PREVIEW_INVALIDATORS = new Map<string, () => void>();
 
 function preserveBashPreview(ctx: any): void {
-	const toolCallId = typeof ctx?.toolCallId === "string" ? ctx.toolCallId : undefined;
+	const toolCallId =
+		typeof ctx?.toolCallId === "string" ? ctx.toolCallId : undefined;
 	if (!toolCallId) return;
 	PRESERVED_BASH_PREVIEWS.add(toolCallId);
 	if (typeof ctx?.invalidate === "function") {
@@ -3179,26 +4009,38 @@ function clearPreservedBashPreviews(): void {
 	if (PRESERVED_BASH_PREVIEWS.size === 0) return;
 	const invalidators = [...PRESERVED_BASH_PREVIEWS]
 		.map((toolCallId) => BASH_PREVIEW_INVALIDATORS.get(toolCallId))
-		.filter((invalidate): invalidate is () => void => typeof invalidate === "function");
+		.filter(
+			(invalidate): invalidate is () => void =>
+				typeof invalidate === "function",
+		);
 	PRESERVED_BASH_PREVIEWS.clear();
 	BASH_PREVIEW_INVALIDATORS.clear();
 	for (const invalidate of invalidators) {
-		try { invalidate(); } catch { /* noop */ }
+		try {
+			invalidate();
+		} catch {
+			/* noop */
+		}
 	}
 }
 
 export function hasNonEmptyAssistantTextDelta(event: any): boolean {
 	const streamEvent = event?.assistantMessageEvent;
-	return streamEvent?.type === "text_delta" &&
+	return (
+		streamEvent?.type === "text_delta" &&
 		typeof streamEvent.delta === "string" &&
-		streamEvent.delta.trim().length > 0;
+		streamEvent.delta.trim().length > 0
+	);
 }
 
 function shouldPreserveBashPreview(ctx: any): boolean {
 	// Grouping/dense chrome already collapses completed bash to one line — keeping
 	// a multi-line tail would flash large then shrink when the next tool groups in.
 	if (toolGroupingEnabled()) return false;
-	return typeof ctx?.toolCallId === "string" && PRESERVED_BASH_PREVIEWS.has(ctx.toolCallId);
+	return (
+		typeof ctx?.toolCallId === "string" &&
+		PRESERVED_BASH_PREVIEWS.has(ctx.toolCallId)
+	);
 }
 
 function normalizeRtkCommandPreview(command: string): string {
@@ -3213,7 +4055,10 @@ function rtkPreviewMatches(command: string, preview: string): boolean {
 	if (normalizedPreview.endsWith("…")) {
 		return normalized.startsWith(normalizedPreview.slice(0, -1));
 	}
-	return normalized.startsWith(normalizedPreview) || normalizedPreview.startsWith(normalized);
+	return (
+		normalized.startsWith(normalizedPreview) ||
+		normalizedPreview.startsWith(normalized)
+	);
 }
 
 function parseRtkRewriteNotice(message: string): RtkRewriteRecord | undefined {
@@ -3227,12 +4072,15 @@ function parseRtkRewriteNotice(message: string): RtkRewriteRecord | undefined {
 
 function rememberPendingRtkRewrite(record: RtkRewriteRecord): void {
 	RTK_PENDING_REWRITES.push(record);
-	while (RTK_PENDING_REWRITES.length > RTK_PENDING_REWRITE_LIMIT) RTK_PENDING_REWRITES.shift();
+	while (RTK_PENDING_REWRITES.length > RTK_PENDING_REWRITE_LIMIT)
+		RTK_PENDING_REWRITES.shift();
 }
 
 function findRtkRewriteToolId(record: RtkRewriteRecord): string | undefined {
 	const entries = [...RTK_ORIGINAL_BASH_COMMANDS.entries()].reverse();
-	return entries.find(([, command]) => rtkPreviewMatches(command, record.original))?.[0];
+	return entries.find(([, command]) =>
+		rtkPreviewMatches(command, record.original),
+	)?.[0];
 }
 
 function rememberRtkRewrite(record: RtkRewriteRecord): void {
@@ -3244,21 +4092,37 @@ function rememberRtkRewrite(record: RtkRewriteRecord): void {
 	rememberPendingRtkRewrite(record);
 }
 
-function takePendingRtkRewrite(originalCommand: string | undefined, currentCommand: string | undefined): RtkRewriteRecord | undefined {
+function takePendingRtkRewrite(
+	originalCommand: string | undefined,
+	currentCommand: string | undefined,
+): RtkRewriteRecord | undefined {
 	const index = RTK_PENDING_REWRITES.findIndex((record) => {
-		return (!!originalCommand && rtkPreviewMatches(originalCommand, record.original))
-			|| (!!currentCommand && (rtkPreviewMatches(currentCommand, record.rewritten) || rtkPreviewMatches(currentCommand, record.original)));
+		return (
+			(!!originalCommand &&
+				rtkPreviewMatches(originalCommand, record.original)) ||
+			(!!currentCommand &&
+				(rtkPreviewMatches(currentCommand, record.rewritten) ||
+					rtkPreviewMatches(currentCommand, record.original)))
+		);
 	});
 	if (index === -1) return undefined;
 	const [record] = RTK_PENDING_REWRITES.splice(index, 1);
 	return record;
 }
 
-function ensureRtkRewriteForContext(ctx: any, args: any): RtkRewriteRecord | undefined {
-	if (ctx?.state?._rtkRewriteRecord) return ctx.state._rtkRewriteRecord as RtkRewriteRecord;
-	const toolCallId = typeof ctx?.toolCallId === "string" ? ctx.toolCallId : undefined;
-	const currentCommand = typeof args?.command === "string" ? args.command : undefined;
-	const originalCommand = toolCallId ? RTK_ORIGINAL_BASH_COMMANDS.get(toolCallId) : undefined;
+function ensureRtkRewriteForContext(
+	ctx: any,
+	args: any,
+): RtkRewriteRecord | undefined {
+	if (ctx?.state?._rtkRewriteRecord)
+		return ctx.state._rtkRewriteRecord as RtkRewriteRecord;
+	const toolCallId =
+		typeof ctx?.toolCallId === "string" ? ctx.toolCallId : undefined;
+	const currentCommand =
+		typeof args?.command === "string" ? args.command : undefined;
+	const originalCommand = toolCallId
+		? RTK_ORIGINAL_BASH_COMMANDS.get(toolCallId)
+		: undefined;
 	if (!toolCallId) return undefined;
 
 	let record = RTK_REWRITES_BY_TOOL_ID.get(toolCallId);
@@ -3266,7 +4130,13 @@ function ensureRtkRewriteForContext(ctx: any, args: any): RtkRewriteRecord | und
 		record = takePendingRtkRewrite(originalCommand, currentCommand);
 		if (record) RTK_REWRITES_BY_TOOL_ID.set(toolCallId, record);
 	}
-	if (!record && originalCommand && currentCommand && normalizeRtkCommandPreview(originalCommand) !== normalizeRtkCommandPreview(currentCommand)) {
+	if (
+		!record &&
+		originalCommand &&
+		currentCommand &&
+		normalizeRtkCommandPreview(originalCommand) !==
+			normalizeRtkCommandPreview(currentCommand)
+	) {
 		record = {
 			original: originalCommand,
 			rewritten: currentCommand,
@@ -3278,7 +4148,10 @@ function ensureRtkRewriteForContext(ctx: any, args: any): RtkRewriteRecord | und
 	return record;
 }
 
-function formatRtkRewriteDetails(record: RtkRewriteRecord, theme: Theme): string {
+function formatRtkRewriteDetails(
+	record: RtkRewriteRecord,
+	theme: Theme,
+): string {
 	return [
 		theme.fg("muted", "RTK rewrite"),
 		`${theme.fg("muted", "original :")} ${theme.fg("dim", record.original)}`,
@@ -3290,7 +4163,10 @@ function patchUiNotifications(ui: any): void {
 	if (!ui || ui[UI_NOTIFY_PATCH_FLAG]) return;
 	const originalNotify = ui.notify;
 	if (typeof originalNotify !== "function") return;
-	ui.notify = function patchedUiNotify(message: string, type?: "info" | "warning" | "error") {
+	ui.notify = function patchedUiNotify(
+		message: string,
+		type?: "info" | "warning" | "error",
+	) {
 		if (typeof message === "string") {
 			const rewrite = parseRtkRewriteNotice(message);
 			if (rewrite) {
@@ -3328,17 +4204,34 @@ function clearRtkRewriteState(): void {
 	clearPreservedBashPreviews();
 }
 
-function getWriteWasNewFile(ctx: any, cwd: string, filePath: string, reveal = shouldRevealCallArgs(ctx)): boolean | undefined {
-	if (typeof ctx?.state?._writeWasNewFile === "boolean") return ctx.state._writeWasNewFile;
+function getWriteWasNewFile(
+	ctx: any,
+	cwd: string,
+	filePath: string,
+	reveal = shouldRevealCallArgs(ctx),
+): boolean | undefined {
+	if (typeof ctx?.state?._writeWasNewFile === "boolean")
+		return ctx.state._writeWasNewFile;
 	if (!filePath || !reveal) return undefined;
-	const existedBefore = typeof ctx?.toolCallId === "string" ? WRITE_EXISTED_BEFORE.get(ctx.toolCallId) : undefined;
-	const wasNew = existedBefore === undefined ? !fileExistsForTool(cwd, filePath) : !existedBefore;
+	const existedBefore =
+		typeof ctx?.toolCallId === "string"
+			? WRITE_EXISTED_BEFORE.get(ctx.toolCallId)
+			: undefined;
+	const wasNew =
+		existedBefore === undefined
+			? !fileExistsForTool(cwd, filePath)
+			: !existedBefore;
 	if (ctx?.state) ctx.state._writeWasNewFile = wasNew;
 	return wasNew;
 }
 
 function toolStatusDot(ctx: any, theme: Theme): string {
-	const status = ctx.state?._toolStatus as "pending" | "success" | "error" | "idle" | undefined;
+	const status = ctx.state?._toolStatus as
+		| "pending"
+		| "success"
+		| "error"
+		| "idle"
+		| undefined;
 	if (status === "success") return `${themeStatusDot(theme, "success")} `;
 	if (status === "error") return `${themeStatusDot(theme, "error")} `;
 	if (status === "idle") return `${themeStatusDot(theme, "dim")} `;
@@ -3349,43 +4242,33 @@ function toolStatusDot(ctx: any, theme: Theme): string {
 // Branch connector — visual tree from header to output
 // ---------------------------------------------------------------------------
 
-function branchIndent(text: string, continued = false, theme?: Theme): string {
-	const rule = currentToolBranchAnsi(theme);
-	// Align under bare `├ `/`└ ` (│ + one space, or two spaces when closed).
-	const prefix = continued ? `${rule}│${TRANSPARENT_RESET} ` : "  ";
-	return `${prefix}${WRAP_MARK}${text}`;
-}
-
-function branchLead(text: string, continued = false, theme?: Theme): string {
-	const rule = currentToolBranchAnsi(theme);
-	// Bare tee/corner only — no horizontal ─ arm.
-	return `${rule}${continued ? "├" : "└"}${TRANSPARENT_RESET} ${WRAP_MARK}${text}`;
-}
-
-function withBranch(content: string, theme: Theme, _isError = false, continued = false): string {
+function withBranch(
+	content: string,
+	theme: Theme,
+	_isError = false,
+	_continued = false,
+): string {
 	if (!content || !content.trim()) return "";
-	const lines = content.split("\n");
-	const first = lines[0] ?? "";
-	if (lines.length === 1) return branchLead(first, continued, theme);
-	const rest = lines.slice(1).map((line) => branchIndent(line, continued, theme));
-	return `${branchLead(first, continued, theme)}\n${rest.join("\n")}`;
+	const rule = currentToolBranchAnsi(theme);
+	return formatClaudeResultBlock(content.split("\n"))
+		.map((line, index) =>
+			index === 0
+				? `  ${rule}⎿${TRANSPARENT_RESET}  ${WRAP_MARK}${line.slice(5)}`
+				: `     ${WRAP_MARK}${line.slice(5)}`,
+		)
+		.join("\n");
 }
 
-function withFinalBranchBlock(content: string, theme: Theme, isError = false): string {
-	if (!content || !content.trim()) return "";
-	const lines = content.split("\n");
-	const first = lines[0] ?? "";
-	if (lines.length === 1) return branchLead(first, false, theme);
-	const middle = lines.slice(1, -1).map((line) => branchIndent(line, true, theme));
-	const last = lines[lines.length - 1] ?? "";
-	return [branchLead(first, true, theme), ...middle, branchLead(last, false, theme)].join("\n");
+function withFinalBranchBlock(
+	content: string,
+	theme: Theme,
+	isError = false,
+): string {
+	return withBranch(content, theme, isError);
 }
 
 function indentBranchBlock(block: string): string {
-	return block
-		.split("\n")
-		.map((line) => (line ? ` ${line}` : line))
-		.join("\n");
+	return outdentClaudeResultBlock(block.split("\n")).join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -3439,14 +4322,22 @@ function updateBlinkActiveStates(): void {
 		const active = activeSet.has(entry.key);
 		if (entry.key?._blinkActive !== active) {
 			entry.key._blinkActive = active;
-			try { entry.invalidate(); } catch { /* noop */ }
+			try {
+				entry.invalidate();
+			} catch {
+				/* noop */
+			}
 		}
 	}
 }
 
 function _clearAllBlinkContexts(): void {
 	for (const entry of _blinkContexts.values()) {
-		try { entry.key._blinkActive = false; } catch { /* noop */ }
+		try {
+			entry.key._blinkActive = false;
+		} catch {
+			/* noop */
+		}
 	}
 	_blinkContexts.clear();
 	if (_globalBlinkTimer) {
@@ -3470,7 +4361,10 @@ function _scheduleGlobalBlinkTimer(): void {
 		// Heartbeat here so sparse/no-output commands never look "stale".
 		if (currentAgentWorkStartMs !== undefined) {
 			markBlinkActivity();
-		} else if (_lastBlinkActivity && Date.now() - _lastBlinkActivity > BLINK_STALE_TIMEOUT_MS) {
+		} else if (
+			_lastBlinkActivity &&
+			Date.now() - _lastBlinkActivity > BLINK_STALE_TIMEOUT_MS
+		) {
 			// Agent already finished; leftover entries are leaks. Stop the re-render storm.
 			_clearAllBlinkContexts();
 			return;
@@ -3478,7 +4372,11 @@ function _scheduleGlobalBlinkTimer(): void {
 		_globalBlinkPhaseIndex = (_globalBlinkPhaseIndex + 1) % AGENT_BREATHE_LEN;
 		_globalBlinkPhase = _globalBlinkPhaseIndex % 2 === 0;
 		for (const entry of getBlinkingEntries()) {
-			try { entry.invalidate(); } catch { /* noop */ }
+			try {
+				entry.invalidate();
+			} catch {
+				/* noop */
+			}
 		}
 		_scheduleGlobalBlinkTimer();
 	}, intervalMs);
@@ -3495,7 +4393,10 @@ function _stopGlobalBlinkTimerIfEmpty(): void {
 function setupBlinkTimer(ctx: any): void {
 	const key = getBlinkKey(ctx);
 	if (!key) return;
-	const invalidate = typeof ctx?.invalidate === "function" ? () => safeInvalidate(ctx) : () => {};
+	const invalidate =
+		typeof ctx?.invalidate === "function"
+			? () => safeInvalidate(ctx)
+			: () => {};
 	const existing = _blinkContexts.get(key);
 	if (existing) {
 		// Already tracked — refresh invalidate + ensure the global timer is alive.
@@ -3525,7 +4426,9 @@ function clearBlinkTimer(ctx: any): void {
 	_scheduleGlobalBlinkTimer();
 }
 
-function pendingToolChromeColor(theme: Theme): "dim" | "muted" | "thinkingText" {
+function pendingToolChromeColor(
+	theme: Theme,
+): "dim" | "muted" | "thinkingText" {
 	if (!themeAdaptiveEnabled()) return "muted";
 	return "dim";
 }
@@ -3598,16 +4501,16 @@ const NAME_ICON: Record<string, string> = {
 	"package.json": `\x1b[38;2;137;180;130m\ue71e\x1b[0m`,
 	"tsconfig.json": `\x1b[38;2;49;120;198m\ue628\x1b[0m`,
 	".gitignore": `\x1b[38;2;222;165;132m\ue702\x1b[0m`,
-	"dockerfile": `\x1b[38;2;56;152;236m\ue7b0\x1b[0m`,
-	"makefile": `\x1b[38;2;130;130;130m\ue615\x1b[0m`,
+	dockerfile: `\x1b[38;2;56;152;236m\ue7b0\x1b[0m`,
+	makefile: `\x1b[38;2;130;130;130m\ue615\x1b[0m`,
 	"readme.md": `\x1b[38;2;66;165;245m\ue73e\x1b[0m`,
-	"license": `\x1b[38;2;218;218;218m\ue60a\x1b[0m`,
+	license: `\x1b[38;2;218;218;218m\ue60a\x1b[0m`,
 };
 
 function fileIcon(fp: string): string {
-	const base = fp.split('/').pop()?.toLowerCase() ?? '';
+	const base = fp.split("/").pop()?.toLowerCase() ?? "";
 	if (NAME_ICON[base]) return `${NAME_ICON[base]} `;
-	const ext = base.includes('.') ? base.split('.').pop() ?? '' : '';
+	const ext = base.includes(".") ? (base.split(".").pop() ?? "") : "";
 	return EXT_ICON[ext] ? `${EXT_ICON[ext]} ` : `${NF_DEFAULT} `;
 }
 
@@ -3649,7 +4552,9 @@ function wrapMarkedLine(line: string, width: number): string[] {
 	const bodyWidth = Math.max(1, width - prefixWidth);
 	const wrapped = wrapTextWithAnsi(body, bodyWidth);
 	const continuation = markedContinuationPrefix(prefix);
-	return wrapped.map((part, index) => (index === 0 ? `${prefix}${part}` : `${continuation}${part}`));
+	return wrapped.map((part, index) =>
+		index === 0 ? `${prefix}${part}` : `${continuation}${part}`,
+	);
 }
 
 class ToolText extends Text {
@@ -3678,12 +4583,13 @@ class ToolText extends Text {
 	render(width: number): string[] {
 		const branchKey = toolBranchRenderCacheKey();
 		if (
-			this.toolCachedLines
-			&& this.toolCachedValue === this.value
-			&& this.toolCachedWidth === width
-			&& (this as any)._toolBranchCacheKey === branchKey
-			&& (this as any)._toolBranchCacheEpoch === _toolBranchVisualEpoch
-		) return this.toolCachedLines;
+			this.toolCachedLines &&
+			this.toolCachedValue === this.value &&
+			this.toolCachedWidth === width &&
+			(this as any)._toolBranchCacheKey === branchKey &&
+			(this as any)._toolBranchCacheEpoch === _toolBranchVisualEpoch
+		)
+			return this.toolCachedLines;
 		if (!this.value || this.value.trim() === "") {
 			this.toolCachedValue = this.value;
 			this.toolCachedWidth = width;
@@ -3692,7 +4598,9 @@ class ToolText extends Text {
 		}
 		const contentWidth = Math.max(1, width);
 		const lines = this.value.replace(/\t/g, "   ").split("\n");
-		const rendered = lines.flatMap((line) => wrapMarkedLine(line, contentWidth)).map((line) => padToWidth(line, width));
+		const rendered = lines
+			.flatMap((line) => wrapMarkedLine(line, contentWidth))
+			.map((line) => padToWidth(line, width));
 		this.toolCachedValue = this.value;
 		this.toolCachedWidth = width;
 		this.toolCachedLines = rendered;
@@ -3710,35 +4618,47 @@ function makeText(last: unknown, text: string): Text {
 
 function previewLimit(): number {
 	const value = readSettings().previewLines;
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 8;
+	return typeof value === "number" && Number.isFinite(value) && value > 0
+		? Math.floor(value)
+		: 8;
 }
 
 function expandedPreviewLimit(): number {
 	const settings = readSettings();
-	const key = extraToolOutputExpanded ? "extraExpandedPreviewMaxLines" : "expandedPreviewMaxLines";
+	const key = extraToolOutputExpanded
+		? "extraExpandedPreviewMaxLines"
+		: "expandedPreviewMaxLines";
 	const value = settings[key];
 	const fallback = extraToolOutputExpanded ? 12000 : 4000;
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+	return typeof value === "number" && Number.isFinite(value) && value > 0
+		? Math.floor(value)
+		: fallback;
 }
 
 function bashCollapsedLimit(): number {
 	const value = readSettings().bashCollapsedLines;
-	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 10;
+	return typeof value === "number" && Number.isFinite(value) && value >= 0
+		? Math.floor(value)
+		: 10;
 }
 
 function liveToolPreviewEnabled(): boolean {
-	return readSettings().liveToolPreview !== false;
+	return resolveLiveToolPreviewEnabled(readSettings().liveToolPreview);
 }
 
 function liveToolPreviewLimit(): number {
 	const value = readSettings().liveToolPreviewLines;
-	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 5;
+	return typeof value === "number" && Number.isFinite(value) && value >= 0
+		? Math.floor(value)
+		: 5;
 }
 
 /** Explicit collapsed diff cap, or undefined = stock per-site defaults. */
 function diffCollapsedLimit(): number | undefined {
 	const value = readSettings().diffCollapsedLines;
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+	return typeof value === "number" && Number.isFinite(value) && value > 0
+		? Math.floor(value)
+		: undefined;
 }
 
 function collapsedMultiOpLines(maxShown: number): number {
@@ -3760,7 +4680,8 @@ function buildPreviewText(
 	totalLineCount = lines.length,
 	styleLine?: (line: string) => string,
 ): string {
-	if (lines.length === 0 && totalLineCount === 0) return theme.fg("muted", "(no output)");
+	if (lines.length === 0 && totalLineCount === 0)
+		return theme.fg("muted", "(no output)");
 	const maxLines = collapsedPreviewCount(expanded, fallbackCollapsed);
 	// Only style/join the lines we will actually display. Callers used to map
 	// theme.fg over the entire output array first, which scaled with full tool
@@ -3869,15 +4790,29 @@ function loadDiffConfig(): DiffUserConfig {
 // 6x6x6 color cube channel values used by pi's 256color fallback.
 const CUBE_VALUES = [0, 95, 135, 175, 215, 255];
 
-function xterm256ToRgb(index: number): { r: number; g: number; b: number } | null {
+function xterm256ToRgb(
+	index: number,
+): { r: number; g: number; b: number } | null {
 	if (!Number.isInteger(index) || index < 0 || index > 255) return null;
 	if (index < 16) {
 		// Standard 16 ANSI colors — terminal-defined, approximate with VS Code defaults.
 		const basic: Array<[number, number, number]> = [
-			[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
-			[0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192],
-			[128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0],
-			[0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
+			[0, 0, 0],
+			[128, 0, 0],
+			[0, 128, 0],
+			[128, 128, 0],
+			[0, 0, 128],
+			[128, 0, 128],
+			[0, 128, 128],
+			[192, 192, 192],
+			[128, 128, 128],
+			[255, 0, 0],
+			[0, 255, 0],
+			[255, 255, 0],
+			[0, 0, 255],
+			[255, 0, 255],
+			[0, 255, 255],
+			[255, 255, 255],
 		];
 		const [r, g, b] = basic[index];
 		return { r, g, b };
@@ -3894,11 +4829,15 @@ function xterm256ToRgb(index: number): { r: number; g: number; b: number } | nul
 	return { r: level, g: level, b: level };
 }
 
-function parseAnsiRgb(ansi: string): { r: number; g: number; b: number } | null {
+function parseAnsiRgb(
+	ansi: string,
+): { r: number; g: number; b: number } | null {
 	if (!ansi) return null;
 	const esc = "\u001b";
 	// Truecolor: \e[38;2;R;G;Bm or \e[48;2;R;G;Bm
-	const tc = ansi.match(new RegExp(`${esc}\\[(?:38|48);2;(\\d+);(\\d+);(\\d+)m`));
+	const tc = ansi.match(
+		new RegExp(`${esc}\\[(?:38|48);2;(\\d+);(\\d+);(\\d+)m`),
+	);
 	if (tc) return { r: +tc[1], g: +tc[2], b: +tc[3] };
 	// 256-color: \e[38;5;Nm or \e[48;5;Nm — happens on Apple Terminal, screen, etc.
 	const idx = ansi.match(new RegExp(`${esc}\\[(?:38|48);5;(\\d+)m`));
@@ -3970,7 +4909,15 @@ let _themePaletteCacheFingerprint: string | null = null;
 
 /** Resolved-color fingerprint so palette re-derives when the active theme file changes under the same name/object. */
 function themePaletteFingerprint(theme: any): string {
-	const keys = ["success", "error", "borderMuted", "accent", "muted", "toolDiffAdded", "toolDiffRemoved"] as const;
+	const keys = [
+		"success",
+		"error",
+		"borderMuted",
+		"accent",
+		"muted",
+		"toolDiffAdded",
+		"toolDiffRemoved",
+	] as const;
 	return keys.map((k) => safeFgAnsi(theme, k) ?? "").join("\u001f");
 }
 
@@ -3985,7 +4932,8 @@ function themeAdaptiveEnabled(): boolean {
 	return settings.themeAdaptive !== false;
 }
 
-let DIFF_THEME: BundledTheme = (process.env.DIFF_THEME as BundledTheme | undefined) ?? "github-dark";
+let DIFF_THEME: BundledTheme =
+	(process.env.DIFF_THEME as BundledTheme | undefined) ?? "github-dark";
 /** True when the active pi theme has a light panel background (edit/write diff chrome). */
 let _diffOnLightBg = false;
 let codeToAnsiLoader: Promise<any> | null = null;
@@ -4051,7 +4999,10 @@ function outlineChromeAnsiFromBranch(theme?: any): string {
 	if (toolBranchColorModeFixed()) {
 		gray = getConfiguredToolBranchGray();
 	} else if (t) {
-		const hint = safeFgAnsi(t, "dim") ?? safeFgAnsi(t, "muted") ?? safeFgAnsi(t, "borderMuted");
+		const hint =
+			safeFgAnsi(t, "dim") ??
+			safeFgAnsi(t, "muted") ??
+			safeFgAnsi(t, "borderMuted");
 		const rgb = hint ? parseAnsiRgb(hint) : null;
 		if (rgb) gray = Math.round((rgb.r + rgb.g + rgb.b) / 3);
 	}
@@ -4060,7 +5011,9 @@ function outlineChromeAnsiFromBranch(theme?: any): string {
 
 function getConfiguredToolBranchGray(): number {
 	const raw = readSettings().toolBranchRgbGray;
-	return typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.min(255, Math.round(raw))) : DEFAULT_TOOL_BRANCH_GRAY;
+	return typeof raw === "number" && Number.isFinite(raw)
+		? Math.max(0, Math.min(255, Math.round(raw)))
+		: DEFAULT_TOOL_BRANCH_GRAY;
 }
 
 function toolBranchColorModeFixed(): boolean {
@@ -4068,7 +5021,8 @@ function toolBranchColorModeFixed(): boolean {
 }
 
 function toolBranchRenderCacheKey(): string {
-	if (toolBranchColorModeFixed()) return `fixed:${getConfiguredToolBranchGray()}`;
+	if (toolBranchColorModeFixed())
+		return `fixed:${getConfiguredToolBranchGray()}`;
 	return `theme:${stripAnsi(TOOL_RULE)}`;
 }
 
@@ -4145,11 +5099,16 @@ function stripBranchMarkupLine(line: string): string {
 function stripBranchMarkupBlock(text: string): string {
 	return text
 		.split("\n")
-		.map((line) => (stripAnsi(line).trim() ? stripBranchMarkupLine(line) : line))
+		.map((line) =>
+			stripAnsi(line).trim() ? stripBranchMarkupLine(line) : line,
+		)
 		.join("\n");
 }
 
-function liveBranchDisplay(state: Record<string, unknown> | undefined, theme: Theme): string | undefined {
+function liveBranchDisplay(
+	state: Record<string, unknown> | undefined,
+	theme: Theme,
+): string | undefined {
 	if (!state || typeof state !== "object") return undefined;
 	const body = state._ptBody;
 	if (typeof body === "string" && body.trim() && !body.includes("(rendering")) {
@@ -4157,12 +5116,17 @@ function liveBranchDisplay(state: Record<string, unknown> | undefined, theme: Th
 	}
 	const display = state._ptDisplay;
 	if (typeof display === "string" && display.trim()) {
-		return indentBranchBlock(withBranch(stripBranchMarkupBlock(display), theme, false, true));
+		return indentBranchBlock(
+			withBranch(stripBranchMarkupBlock(display), theme, false, true),
+		);
 	}
 	return undefined;
 }
 
-function refreshToolBranchDisplaysInState(state: Record<string, unknown> | undefined, theme: Theme): void {
+function refreshToolBranchDisplaysInState(
+	state: Record<string, unknown> | undefined,
+	theme: Theme,
+): void {
 	if (!state || typeof state !== "object") return;
 	const body = state._ptBody;
 	if (typeof body === "string" && body.trim() && !body.includes("(rendering")) {
@@ -4172,7 +5136,9 @@ function refreshToolBranchDisplaysInState(state: Record<string, unknown> | undef
 	const display = state._ptDisplay;
 	if (typeof display === "string" && display.trim()) {
 		const stripped = stripBranchMarkupBlock(display);
-		state._ptDisplay = indentBranchBlock(withBranch(stripped, theme, false, true));
+		state._ptDisplay = indentBranchBlock(
+			withBranch(stripped, theme, false, true),
+		);
 	}
 }
 
@@ -4189,7 +5155,9 @@ function refreshAllToolBranchVisuals(ctx: any): void {
 			ctx.ui.setToolsExpanded(ctx.ui.getToolsExpanded());
 			ctx.ui.invalidate?.();
 			ctx.ui.requestRender?.();
-		} catch { /* noop */ }
+		} catch {
+			/* noop */
+		}
 	}
 }
 
@@ -4218,7 +5186,9 @@ function scheduleDeferredChromeRebind(ctx: any, delayMs = 0): void {
 	const timer = setTimeout(() => {
 		try {
 			rebindUiChromeToTheme(ctx);
-		} catch { /* noop */ }
+		} catch {
+			/* noop */
+		}
 	}, delayMs);
 	unrefTimer(timer);
 }
@@ -4235,7 +5205,11 @@ interface DiffColors {
 	fgCtx: string;
 }
 
-let DEFAULT_DIFF_COLORS: DiffColors = { fgAdd: FG_ADD, fgDel: FG_DEL, fgCtx: FG_DIM };
+let DEFAULT_DIFF_COLORS: DiffColors = {
+	fgAdd: FG_ADD,
+	fgDel: FG_DEL,
+	fgCtx: FG_DIM,
+};
 let autoDerivePending = true;
 let hasExplicitBgConfig = false;
 
@@ -4279,7 +5253,9 @@ function syncDiffShikiTheme(theme: any): void {
 	const config = loadDiffConfig();
 	if (config.diffTheme) return;
 	_diffOnLightBg = isLightThemeBackground(theme);
-	DIFF_THEME = (_diffOnLightBg ? "github-light" : "github-dark") as BundledTheme;
+	DIFF_THEME = (
+		_diffOnLightBg ? "github-light" : "github-dark"
+	) as BundledTheme;
 	clearHighlightCache();
 }
 const UNIVERSAL_DIFF_ADD_FG = { r: 110, g: 210, b: 130 };
@@ -4312,8 +5288,10 @@ function autoDeriveBgFromTheme(theme: any): void {
 	const useTheme = themeAdaptiveEnabled() && theme;
 	const onLight = useTheme && isLightThemeBackground(theme);
 	_diffOnLightBg = !!onLight;
-	const addFgRgb = (useTheme && themeFgRgb(theme, "toolDiffAdded")) || UNIVERSAL_DIFF_ADD_FG;
-	const delFgRgb = (useTheme && themeFgRgb(theme, "toolDiffRemoved")) || UNIVERSAL_DIFF_DEL_FG;
+	const addFgRgb =
+		(useTheme && themeFgRgb(theme, "toolDiffAdded")) || UNIVERSAL_DIFF_ADD_FG;
+	const delFgRgb =
+		(useTheme && themeFgRgb(theme, "toolDiffRemoved")) || UNIVERSAL_DIFF_DEL_FG;
 	const base =
 		(useTheme && themeBgRgb(theme, "toolSuccessBg")) ||
 		(useTheme && themeBgRgb(theme, "userMessageBg")) ||
@@ -4339,7 +5317,9 @@ function autoDeriveBgFromTheme(theme: any): void {
 
 // Track which palette fields the user explicitly set so theme-derived
 // updates don't clobber their config.
-const _explicitFgFields = new Set<"fgAdd" | "fgDel" | "fgDim" | "fgLnum" | "fgRule" | "fgStripe" | "fgSafeMuted">();
+const _explicitFgFields = new Set<
+	"fgAdd" | "fgDel" | "fgDim" | "fgLnum" | "fgRule" | "fgStripe" | "fgSafeMuted"
+>();
 
 // Original Claude-Code-style palette captured at module-load so we can
 // restore it when the user toggles themeAdaptive off at runtime.
@@ -4371,8 +5351,10 @@ function resetThemePalette(): void {
 	if (!_explicitFgFields.has("fgDim")) FG_DIM = _claudeStyleDefaults.FG_DIM;
 	if (!_explicitFgFields.has("fgLnum")) FG_LNUM = _claudeStyleDefaults.FG_LNUM;
 	if (!_explicitFgFields.has("fgRule")) FG_RULE = _claudeStyleDefaults.FG_RULE;
-	if (!_explicitFgFields.has("fgStripe")) FG_STRIPE = _claudeStyleDefaults.FG_STRIPE;
-	if (!_explicitFgFields.has("fgSafeMuted")) FG_SAFE_MUTED = _claudeStyleDefaults.FG_SAFE_MUTED;
+	if (!_explicitFgFields.has("fgStripe"))
+		FG_STRIPE = _claudeStyleDefaults.FG_STRIPE;
+	if (!_explicitFgFields.has("fgSafeMuted"))
+		FG_SAFE_MUTED = _claudeStyleDefaults.FG_SAFE_MUTED;
 	if (!_explicitFgFields.has("fgAdd")) FG_ADD = _claudeStyleDefaults.FG_ADD;
 	if (!_explicitFgFields.has("fgDel")) FG_DEL = _claudeStyleDefaults.FG_DEL;
 	DIVIDER = `${FG_RULE}│${D_RST}`;
@@ -4398,7 +5380,8 @@ function applyThemePaletteIfNeeded(theme: any): void {
 		return;
 	}
 	const paletteChanged =
-		_themePaletteCacheName !== themeName || _themePaletteCacheFingerprint !== fingerprint;
+		_themePaletteCacheName !== themeName ||
+		_themePaletteCacheFingerprint !== fingerprint;
 	if (paletteChanged) bumpToolBranchVisualEpoch();
 	_themePaletteCacheTheme = theme;
 	_themePaletteCacheName = themeName;
@@ -4449,14 +5432,25 @@ function applyDiffPalette(): void {
 	if (Object.keys(overrides).length > 0) hasExplicitBgConfig = true;
 	_explicitFgFields.clear();
 
-	const applyBg = (key: string, presetValue: string | undefined, set: (value: string) => void) => {
+	const applyBg = (
+		key: string,
+		presetValue: string | undefined,
+		set: (value: string) => void,
+	) => {
 		const hex = overrides[key] ?? presetValue;
 		if (!hex) return;
 		const ansi = hexToBgAnsi(hex);
 		if (ansi) set(ansi);
 	};
 	const applyFg = (
-		key: "fgAdd" | "fgDel" | "fgDim" | "fgLnum" | "fgRule" | "fgStripe" | "fgSafeMuted",
+		key:
+			| "fgAdd"
+			| "fgDel"
+			| "fgDim"
+			| "fgLnum"
+			| "fgRule"
+			| "fgStripe"
+			| "fgSafeMuted",
 		presetValue: string | undefined,
 		set: (value: string) => void,
 	) => {
@@ -4592,7 +5586,9 @@ function fit(value: string, width: number): string {
 		vis++;
 		i++;
 	}
-	return width > 2 ? `${value.slice(0, i)}${D_RST}${FG_DIM}›${D_RST}` : `${value.slice(0, i)}${D_RST}`;
+	return width > 2
+		? `${value.slice(0, i)}${D_RST}${FG_DIM}›${D_RST}`
+		: `${value.slice(0, i)}${D_RST}`;
 }
 
 function ansiState(text: string): string {
@@ -4618,10 +5614,17 @@ function ansiState(text: string): string {
 function normalizeShikiContrast(ansi: string): string {
 	const darkFgThreshold = _diffOnLightBg ? 140 : 72;
 	return ansi.replace(/\x1b\[([0-9;]*)m/g, (seq, params: string) => {
-		if (params === "30" || params === "90" || params === "38;5;0" || params === "38;5;8") return FG_SAFE_MUTED;
+		if (
+			params === "30" ||
+			params === "90" ||
+			params === "38;5;0" ||
+			params === "38;5;8"
+		)
+			return FG_SAFE_MUTED;
 		if (!params.startsWith("38;2;")) return seq;
 		const parts = params.split(";").map(Number);
-		if (parts.length !== 5 || parts.some((n) => !Number.isFinite(n))) return seq;
+		if (parts.length !== 5 || parts.some((n) => !Number.isFinite(n)))
+			return seq;
 		const [, , r, g, b] = parts;
 		const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 		if (_diffOnLightBg) {
@@ -4631,12 +5634,19 @@ function normalizeShikiContrast(ansi: string): string {
 	});
 }
 
-function wrapAnsi(text: string, width: number, maxRows = adaptiveWrapRows(), fillBg = ""): string[] {
+function wrapAnsi(
+	text: string,
+	width: number,
+	maxRows = adaptiveWrapRows(),
+	fillBg = "",
+): string[] {
 	if (width <= 0) return [""];
 	const plain = diffStrip(text);
 	if (plain.length <= width) {
 		const pad = width - plain.length;
-		return pad > 0 ? [text + fillBg + " ".repeat(pad) + (fillBg ? D_RST : "")] : [text];
+		return pad > 0
+			? [text + fillBg + " ".repeat(pad) + (fillBg ? D_RST : "")]
+			: [text];
 	}
 
 	const rows: string[] = [];
@@ -4712,7 +5722,11 @@ function stripes(width: number): string {
 
 // Claude Code shows no stat bar next to diff summaries; kept as a stub so
 // callers don't need to change if this is ever restored.
-function renderDiffStatBar(added: number, removed: number, width = termW()): string {
+function renderDiffStatBar(
+	added: number,
+	removed: number,
+	width = termW(),
+): string {
 	return "";
 }
 
@@ -4725,15 +5739,26 @@ function summarizeDiff(added: number, removed: number): string {
 	return bar ? `${parts.join(" ")} ${bar}` : parts.join(" ");
 }
 
-function diffSummaryWithMeta(added: number, removed: number, hunks: number, mode: string): string {
+function diffSummaryWithMeta(
+	added: number,
+	removed: number,
+	hunks: number,
+	mode: string,
+): string {
 	const base = summarizeDiff(added, removed);
 	const meaningfulMode = mode === "new file" || mode === "delete" ? mode : "";
-	return meaningfulMode ? `${base} ${FG_DIM}•${D_RST} ${FG_DIM}${meaningfulMode}${D_RST}` : base;
+	return meaningfulMode
+		? `${base} ${FG_DIM}•${D_RST} ${FG_DIM}${meaningfulMode}${D_RST}`
+		: base;
 }
 
 /** Claude Code-style new-file preview: dim line numbers, plain text — no
  *  add-gutter or green background (colored diffs are for edits only). */
-function renderNewFileLines(content: string, max: number, width: number): string {
+function renderNewFileLines(
+	content: string,
+	max: number,
+	width: number,
+): string {
 	const all = content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
 	const shown = all.slice(0, max);
 	const nw = Math.max(2, String(all.length).length);
@@ -4742,12 +5767,17 @@ function renderNewFileLines(content: string, max: number, width: number): string
 		return clampLineWidth(`${FG_LNUM}${num}${D_RST}  ${line}`, width);
 	});
 	if (all.length > shown.length) {
-		rows.push(`${FG_DIM}  ${collapsedDiffHint(all.length - shown.length, 0)}${D_RST}`);
+		rows.push(
+			`${FG_DIM}  ${collapsedDiffHint(all.length - shown.length, 0)}${D_RST}`,
+		);
 	}
 	return rows.join("\n");
 }
 
-function collapsedDiffHint(remainingLines: number, hiddenHunks: number): string {
+function collapsedDiffHint(
+	remainingLines: number,
+	hiddenHunks: number,
+): string {
 	const width = termW();
 	const candidates = [
 		`… (${remainingLines} more diff lines${hiddenHunks > 0 ? ` • ${hiddenHunks} more hunks` : ""} • ${keyHint("app.tools.expand", "to toggle")})`,
@@ -4776,7 +5806,11 @@ function maxLineNumber(lines: DiffLine[]): number {
 	return max;
 }
 
-function shouldUseSplit(diff: ParsedDiff, tw: number, maxRows = MAX_PREVIEW_LINES): boolean {
+function shouldUseSplit(
+	diff: ParsedDiff,
+	tw: number,
+	maxRows = MAX_PREVIEW_LINES,
+): boolean {
 	if (!diff.lines.length) return false;
 	if (tw < SPLIT_MIN_WIDTH) return false;
 	const nw = Math.max(2, String(maxLineNumber(diff.lines)).length);
@@ -4843,7 +5877,11 @@ function lang(filePath: string): BundledLanguage | undefined {
 	return EXT_LANG[extname(filePath).slice(1).toLowerCase()];
 }
 
-async function codeToAnsiLazy(code: string, language: BundledLanguage, theme: BundledTheme): Promise<string> {
+async function codeToAnsiLazy(
+	code: string,
+	language: BundledLanguage,
+	theme: BundledTheme,
+): Promise<string> {
 	if (!codeToAnsiLoader) {
 		// Self-healing: a failed import (missing dep, transient error) must not leave a
 		// permanently-rejected promise that later becomes an unhandled rejection. Reset
@@ -4877,14 +5915,19 @@ function touchCache(key: string, value: string[]): string[] {
 	return value;
 }
 
-async function hlBlock(code: string, language: BundledLanguage | undefined): Promise<string[]> {
+async function hlBlock(
+	code: string,
+	language: BundledLanguage | undefined,
+): Promise<string[]> {
 	if (!code) return [""];
 	if (!language || code.length > MAX_HL_CHARS) return code.split("\n");
 	const key = `${DIFF_THEME}\0${language}\0${code}`;
 	const hit = hlCache.get(key);
 	if (hit) return touchCache(key, hit);
 	try {
-		const ansi = normalizeShikiContrast(await codeToAnsiLazy(code, language, DIFF_THEME));
+		const ansi = normalizeShikiContrast(
+			await codeToAnsiLazy(code, language, DIFF_THEME),
+		);
 		const out = (ansi.endsWith("\n") ? ansi.slice(0, -1) : ansi).split("\n");
 		return touchCache(key, out);
 	} catch {
@@ -4892,22 +5935,41 @@ async function hlBlock(code: string, language: BundledLanguage | undefined): Pro
 	}
 }
 
-async function mapWithConcurrency<T, R>(items: T[], limit: number, mapItem: (item: T, index: number) => Promise<R>): Promise<R[]> {
+async function mapWithConcurrency<T, R>(
+	items: T[],
+	limit: number,
+	mapItem: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
 	const safeLimit = Math.max(1, Math.min(items.length || 1, Math.floor(limit)));
 	const results = new Array<R>(items.length);
 	let nextIndex = 0;
-	await Promise.all(Array.from({ length: safeLimit }, async () => {
-		while (true) {
-			const index = nextIndex++;
-			if (index >= items.length) return;
-			results[index] = await mapItem(items[index], index);
-		}
-	}));
+	await Promise.all(
+		Array.from({ length: safeLimit }, async () => {
+			while (nextIndex < items.length) {
+				const index = nextIndex++;
+				if (index >= items.length) break;
+				results[index] = await mapItem(items[index], index);
+			}
+			return undefined;
+		}),
+	);
 	return results;
 }
 
-function parseDiff(oldContent: string, newContent: string, ctxLines = 3): ParsedDiff {
-	const patch = diffApi().structuredPatch("", "", oldContent, newContent, "", "", { context: ctxLines });
+function parseDiff(
+	oldContent: string,
+	newContent: string,
+	ctxLines = 3,
+): ParsedDiff {
+	const patch = diffApi().structuredPatch(
+		"",
+		"",
+		oldContent,
+		newContent,
+		"",
+		"",
+		{ context: ctxLines },
+	);
 	const lines: DiffLine[] = [];
 	let added = 0;
 	let removed = 0;
@@ -4915,7 +5977,12 @@ function parseDiff(oldContent: string, newContent: string, ctxLines = 3): Parsed
 		if (hi > 0) {
 			const prev = patch.hunks[hi - 1];
 			const gap = patch.hunks[hi].oldStart - (prev.oldStart + prev.oldLines);
-			lines.push({ type: "sep", oldNum: null, newNum: gap > 0 ? gap : null, content: "" });
+			lines.push({
+				type: "sep",
+				oldNum: null,
+				newNum: gap > 0 ? gap : null,
+				content: "",
+			});
 		}
 		const hunk = patch.hunks[hi];
 		let oldLine = hunk.oldStart;
@@ -4925,20 +5992,45 @@ function parseDiff(oldContent: string, newContent: string, ctxLines = 3): Parsed
 			const ch = raw[0];
 			const text = raw.slice(1);
 			if (ch === "+") {
-				lines.push({ type: "add", oldNum: null, newNum: newLine++, content: text });
+				lines.push({
+					type: "add",
+					oldNum: null,
+					newNum: newLine++,
+					content: text,
+				});
 				added++;
 			} else if (ch === "-") {
-				lines.push({ type: "del", oldNum: oldLine++, newNum: null, content: text });
+				lines.push({
+					type: "del",
+					oldNum: oldLine++,
+					newNum: null,
+					content: text,
+				});
 				removed++;
 			} else {
-				lines.push({ type: "ctx", oldNum: oldLine++, newNum: newLine++, content: text });
+				lines.push({
+					type: "ctx",
+					oldNum: oldLine++,
+					newNum: newLine++,
+					content: text,
+				});
 			}
 		}
 	}
-	return { lines, added, removed, chars: oldContent.length + newContent.length };
+	return {
+		lines,
+		added,
+		removed,
+		chars: oldContent.length + newContent.length,
+	};
 }
 
-function getCachedParsedDiff(ctx: any, key: string, oldContent: string, newContent: string): ParsedDiff {
+function getCachedParsedDiff(
+	ctx: any,
+	key: string,
+	oldContent: string,
+	newContent: string,
+): ParsedDiff {
 	if (ctx.state?._parsedDiffKey === key && ctx.state._parsedDiff) {
 		return ctx.state._parsedDiff as ParsedDiff;
 	}
@@ -4953,8 +6045,13 @@ function getCachedParsedDiff(ctx: any, key: string, oldContent: string, newConte
 function wordDiffAnalysis(
 	oldText: string,
 	newText: string,
-): { similarity: number; oldRanges: Array<[number, number]>; newRanges: Array<[number, number]> } {
-	if (!oldText && !newText) return { similarity: 1, oldRanges: [], newRanges: [] };
+): {
+	similarity: number;
+	oldRanges: Array<[number, number]>;
+	newRanges: Array<[number, number]>;
+} {
+	if (!oldText && !newText)
+		return { similarity: 1, oldRanges: [], newRanges: [] };
 	const parts = diffApi().diffWords(oldText, newText);
 	const oldRanges: Array<[number, number]> = [];
 	const newRanges: Array<[number, number]> = [];
@@ -4979,7 +6076,12 @@ function wordDiffAnalysis(
 	return { similarity: maxLen > 0 ? same / maxLen : 1, oldRanges, newRanges };
 }
 
-function injectBg(ansiLine: string, ranges: Array<[number, number]>, baseBg: string, hlBg: string): string {
+function injectBg(
+	ansiLine: string,
+	ranges: Array<[number, number]>,
+	baseBg: string,
+	hlBg: string,
+): string {
 	if (!ranges.length) return baseBg + ansiLine + D_RST;
 	let out = baseBg;
 	let vis = 0;
@@ -4997,8 +6099,12 @@ function injectBg(ansiLine: string, ranges: Array<[number, number]>, baseBg: str
 				continue;
 			}
 		}
-		while (rangeIndex < ranges.length && vis >= ranges[rangeIndex][1]) rangeIndex++;
-		const want = rangeIndex < ranges.length && vis >= ranges[rangeIndex][0] && vis < ranges[rangeIndex][1];
+		while (rangeIndex < ranges.length && vis >= ranges[rangeIndex][1])
+			rangeIndex++;
+		const want =
+			rangeIndex < ranges.length &&
+			vis >= ranges[rangeIndex][0] &&
+			vis < ranges[rangeIndex][1];
 		if (want !== inHL) {
 			inHL = want;
 			out += inHL ? hlBg : baseBg;
@@ -5010,7 +6116,10 @@ function injectBg(ansiLine: string, ranges: Array<[number, number]>, baseBg: str
 	return out + D_RST;
 }
 
-function plainWordDiff(oldText: string, newText: string): { old: string; new: string } {
+function plainWordDiff(
+	oldText: string,
+	newText: string,
+): { old: string; new: string } {
 	const parts = diffApi().diffWords(oldText, newText);
 	let oldOut = "";
 	let newOut = "";
@@ -5047,7 +6156,10 @@ async function renderUnified(
 		if (line.type === "ctx" || line.type === "add") newSrc.push(line.content);
 	}
 	const [oldHL, newHL] = canHL
-		? await Promise.all([hlBlock(oldSrc.join("\n"), language), hlBlock(newSrc.join("\n"), language)])
+		? await Promise.all([
+				hlBlock(oldSrc.join("\n"), language),
+				hlBlock(newSrc.join("\n"), language),
+			])
 		: [oldSrc, newSrc];
 
 	let oldIndex = 0;
@@ -5055,7 +6167,14 @@ async function renderUnified(
 	let index = 0;
 	const out: string[] = [diffRule(tw)];
 
-	function emitRow(num: number | null, sign: string, gutterBg: string, signFg: string, body: string, bodyBg = ""): void {
+	function emitRow(
+		num: number | null,
+		sign: string,
+		gutterBg: string,
+		signFg: string,
+		body: string,
+		bodyBg = "",
+	): void {
 		const borderFg = sign === "-" ? dc.fgDel : sign === "+" ? dc.fgAdd : "";
 		const border = borderFg ? `${borderFg}▌${D_RST}` : `${BG_BASE} `;
 		const numFg = borderFg || FG_LNUM;
@@ -5075,13 +6194,22 @@ async function renderUnified(
 			const pad = Math.max(0, totalW - label.length - 2);
 			const half1 = Math.floor(pad / 2);
 			const half2 = pad - half1;
-			out.push(`${BG_BASE}${FG_DIM}${"─".repeat(half1)}${label}${"─".repeat(half2)}${D_RST}`);
+			out.push(
+				`${BG_BASE}${FG_DIM}${"─".repeat(half1)}${label}${"─".repeat(half2)}${D_RST}`,
+			);
 			index++;
 			continue;
 		}
 		if (line.type === "ctx") {
 			const hl = oldHL[oldIndex] ?? line.content;
-			emitRow(line.newNum, " ", BG_BASE, dc.fgCtx, `${BG_BASE}${D_DIM}${hl}`, BG_BASE);
+			emitRow(
+				line.newNum,
+				" ",
+				BG_BASE,
+				dc.fgCtx,
+				`${BG_BASE}${D_DIM}${hl}`,
+				BG_BASE,
+			);
 			oldIndex++;
 			newIndex++;
 			index++;
@@ -5102,24 +6230,73 @@ async function renderUnified(
 		}
 
 		const isPaired = dels.length === 1 && adds.length === 1;
-		const wd = isPaired ? wordDiffAnalysis(dels[0].l.content, adds[0].l.content) : null;
+		const wd = isPaired
+			? wordDiffAnalysis(dels[0].l.content, adds[0].l.content)
+			: null;
 		if (isPaired && wd && wd.similarity >= WORD_DIFF_MIN_SIM && canHL) {
-			emitRow(dels[0].l.oldNum, "-", BG_GUTTER_DEL, `${dc.fgDel}${D_BOLD}`, injectBg(dels[0].hl, wd.oldRanges, BG_DEL, BG_DEL_W), BG_DEL);
-			emitRow(adds[0].l.newNum, "+", BG_GUTTER_ADD, `${dc.fgAdd}${D_BOLD}`, injectBg(adds[0].hl, wd.newRanges, BG_ADD, BG_ADD_W), BG_ADD);
+			emitRow(
+				dels[0].l.oldNum,
+				"-",
+				BG_GUTTER_DEL,
+				`${dc.fgDel}${D_BOLD}`,
+				injectBg(dels[0].hl, wd.oldRanges, BG_DEL, BG_DEL_W),
+				BG_DEL,
+			);
+			emitRow(
+				adds[0].l.newNum,
+				"+",
+				BG_GUTTER_ADD,
+				`${dc.fgAdd}${D_BOLD}`,
+				injectBg(adds[0].hl, wd.newRanges, BG_ADD, BG_ADD_W),
+				BG_ADD,
+			);
 			continue;
 		}
 		if (isPaired && wd && wd.similarity >= WORD_DIFF_MIN_SIM && !canHL) {
 			const pwd = plainWordDiff(dels[0].l.content, adds[0].l.content);
-			emitRow(dels[0].l.oldNum, "-", BG_GUTTER_DEL, `${dc.fgDel}${D_BOLD}`, `${BG_DEL}${pwd.old}`, BG_DEL);
-			emitRow(adds[0].l.newNum, "+", BG_GUTTER_ADD, `${dc.fgAdd}${D_BOLD}`, `${BG_ADD}${pwd.new}`, BG_ADD);
+			emitRow(
+				dels[0].l.oldNum,
+				"-",
+				BG_GUTTER_DEL,
+				`${dc.fgDel}${D_BOLD}`,
+				`${BG_DEL}${pwd.old}`,
+				BG_DEL,
+			);
+			emitRow(
+				adds[0].l.newNum,
+				"+",
+				BG_GUTTER_ADD,
+				`${dc.fgAdd}${D_BOLD}`,
+				`${BG_ADD}${pwd.new}`,
+				BG_ADD,
+			);
 			continue;
 		}
-		for (const d of dels) emitRow(d.l.oldNum, "-", BG_GUTTER_DEL, `${dc.fgDel}${D_BOLD}`, `${BG_DEL}${canHL ? d.hl : d.l.content}`, BG_DEL);
-		for (const a of adds) emitRow(a.l.newNum, "+", BG_GUTTER_ADD, `${dc.fgAdd}${D_BOLD}`, `${BG_ADD}${canHL ? a.hl : a.l.content}`, BG_ADD);
+		for (const d of dels)
+			emitRow(
+				d.l.oldNum,
+				"-",
+				BG_GUTTER_DEL,
+				`${dc.fgDel}${D_BOLD}`,
+				`${BG_DEL}${canHL ? d.hl : d.l.content}`,
+				BG_DEL,
+			);
+		for (const a of adds)
+			emitRow(
+				a.l.newNum,
+				"+",
+				BG_GUTTER_ADD,
+				`${dc.fgAdd}${D_BOLD}`,
+				`${BG_ADD}${canHL ? a.hl : a.l.content}`,
+				BG_ADD,
+			);
 	}
 
 	out.push(diffRule(tw));
-	if (diff.lines.length > vis.length) out.push(`${BG_BASE}${FG_DIM}  ${collapsedDiffHint(diff.lines.length - vis.length, 0)}${D_RST}`);
+	if (diff.lines.length > vis.length)
+		out.push(
+			`${BG_BASE}${FG_DIM}  ${collapsedDiffHint(diff.lines.length - vis.length, 0)}${D_RST}`,
+		);
 	return out.join("\n");
 }
 
@@ -5131,7 +6308,8 @@ async function renderSplit(
 	width = termW(),
 ): Promise<string> {
 	const tw = width;
-	if (!shouldUseSplit(diff, tw, max)) return renderUnified(diff, language, max, dc, width);
+	if (!shouldUseSplit(diff, tw, max))
+		return renderUnified(diff, language, max, dc, width);
 	if (!diff.lines.length) return "";
 
 	type Row = { left: DiffLine | null; right: DiffLine | null };
@@ -5146,10 +6324,13 @@ async function renderSplit(
 		}
 		const dels: DiffLine[] = [];
 		const adds: DiffLine[] = [];
-		while (i < diff.lines.length && diff.lines[i].type === "del") dels.push(diff.lines[i++]);
-		while (i < diff.lines.length && diff.lines[i].type === "add") adds.push(diff.lines[i++]);
+		while (i < diff.lines.length && diff.lines[i].type === "del")
+			dels.push(diff.lines[i++]);
+		while (i < diff.lines.length && diff.lines[i].type === "add")
+			adds.push(diff.lines[i++]);
 		const n = Math.max(dels.length, adds.length);
-		for (let j = 0; j < n; j++) rows.push({ left: dels[j] ?? null, right: adds[j] ?? null });
+		for (let j = 0; j < n; j++)
+			rows.push({ left: dels[j] ?? null, right: adds[j] ?? null });
 	}
 
 	const vis = rows.slice(0, max);
@@ -5157,7 +6338,8 @@ async function renderSplit(
 	const nw = Math.max(2, String(maxLineNumber(diff.lines)).length);
 	const gw = nw + 5;
 	const cw = Math.max(12, half - gw);
-	const canHL = diff.chars <= MAX_HL_CHARS && vis.length * 2 <= MAX_RENDER_LINES * 2;
+	const canHL =
+		diff.chars <= MAX_HL_CHARS && vis.length * 2 <= MAX_RENDER_LINES * 2;
 
 	const leftSrc: string[] = [];
 	const rightSrc: string[] = [];
@@ -5166,7 +6348,10 @@ async function renderSplit(
 		if (row.right && row.right.type !== "sep") rightSrc.push(row.right.content);
 	}
 	const [leftHL, rightHL] = canHL
-		? await Promise.all([hlBlock(leftSrc.join("\n"), language), hlBlock(rightSrc.join("\n"), language)])
+		? await Promise.all([
+				hlBlock(leftSrc.join("\n"), language),
+				hlBlock(rightSrc.join("\n"), language),
+			])
 		: [leftSrc, rightSrc];
 
 	let leftIndex = 0;
@@ -5188,7 +6373,11 @@ async function renderSplit(
 			const gap = line.newNum;
 			const label = gap && gap > 0 ? `··· ${gap} lines ···` : "···";
 			const gutter = `${BG_BASE} ${FG_DIM}${fit("", nw + 2)}${D_RST}${FG_RULE}│${D_RST} `;
-			return { gutter, contGutter: gutter, bodyRows: [`${BG_BASE}${FG_DIM}${fit(label, cw)}${D_RST}`] };
+			return {
+				gutter,
+				contGutter: gutter,
+				bodyRows: [`${BG_BASE}${FG_DIM}${fit(label, cw)}${D_RST}`],
+			};
 		}
 		const isDel = line.type === "del";
 		const isAdd = line.type === "add";
@@ -5196,36 +6385,81 @@ async function renderSplit(
 		const cBg = isDel ? BG_DEL : isAdd ? BG_ADD : BG_BASE;
 		const sFg = isDel ? dc.fgDel : isAdd ? dc.fgAdd : dc.fgCtx;
 		const sign = isDel ? "-" : isAdd ? "+" : " ";
-		const num = isDel ? line.oldNum : isAdd ? line.newNum : side === "left" ? line.oldNum : line.newNum;
+		const num = isDel
+			? line.oldNum
+			: isAdd
+				? line.newNum
+				: side === "left"
+					? line.oldNum
+					: line.newNum;
 		const borderFg = isDel ? dc.fgDel : isAdd ? dc.fgAdd : "";
 		const border = borderFg ? `${borderFg}▌${D_RST}` : ` ${BG_BASE}`;
 		const numFg = borderFg || FG_LNUM;
 		let body: string;
-		if (ranges && ranges.length > 0) body = injectBg(hl, ranges, cBg, isDel ? BG_DEL_W : BG_ADD_W);
+		if (ranges && ranges.length > 0)
+			body = injectBg(hl, ranges, cBg, isDel ? BG_DEL_W : BG_ADD_W);
 		else if (isDel || isAdd) body = `${cBg}${hl}`;
 		else body = `${BG_BASE}${D_DIM}${hl}`;
 		const gutter = `${border}${gBg}${lnum(num, nw, numFg)}${sFg}${D_BOLD}${sign} ${D_RST}${FG_RULE}│${D_RST} `;
 		const contGutter = `${border}${gBg}${" ".repeat(nw + 2)}${D_RST}${FG_RULE}│${D_RST} `;
-		return { gutter, contGutter, bodyRows: wrapAnsi(tabs(body), cw, adaptiveWrapRows(), cBg) };
+		return {
+			gutter,
+			contGutter,
+			bodyRows: wrapAnsi(tabs(body), cw, adaptiveWrapRows(), cBg),
+		};
 	}
 
 	const out: string[] = [];
 	const hdrOld = `${BG_BASE}${" ".repeat(Math.max(0, nw - 2))}${dc.fgDel}${D_DIM}old${D_RST}`;
 	const hdrNew = `${BG_BASE}${" ".repeat(Math.max(0, nw - 2))}${dc.fgAdd}${D_DIM}new${D_RST}`;
-	out.push(`${BG_BASE}${hdrOld}${" ".repeat(Math.max(0, half - nw - 1))}${FG_RULE}┊${D_RST}${hdrNew}`);
+	out.push(
+		`${BG_BASE}${hdrOld}${" ".repeat(Math.max(0, half - nw - 1))}${FG_RULE}┊${D_RST}${hdrNew}`,
+	);
 	out.push(`${diffRule(half)}${FG_RULE}┊${D_RST}${diffRule(half)}`);
 
 	for (const row of vis) {
 		const leftLine = row.left;
 		const rightLine = row.right;
-		const paired = Boolean(leftLine && rightLine && leftLine.type === "del" && rightLine.type === "add");
-		const wd = paired && leftLine && rightLine ? wordDiffAnalysis(leftLine.content, rightLine.content) : null;
+		const paired = Boolean(
+			leftLine &&
+				rightLine &&
+				leftLine.type === "del" &&
+				rightLine.type === "add",
+		);
+		const wd =
+			paired && leftLine && rightLine
+				? wordDiffAnalysis(leftLine.content, rightLine.content)
+				: null;
 		let leftResult: HalfResult;
 		let rightResult: HalfResult;
-		if (paired && wd && leftLine && rightLine && wd.similarity >= WORD_DIFF_MIN_SIM && canHL) {
-			leftResult = halfBuild(leftLine, leftHL[leftIndex++] ?? leftLine.content, wd.oldRanges, "left");
-			rightResult = halfBuild(rightLine, rightHL[rightIndex++] ?? rightLine.content, wd.newRanges, "right");
-		} else if (paired && wd && leftLine && rightLine && wd.similarity >= WORD_DIFF_MIN_SIM && !canHL) {
+		if (
+			paired &&
+			wd &&
+			leftLine &&
+			rightLine &&
+			wd.similarity >= WORD_DIFF_MIN_SIM &&
+			canHL
+		) {
+			leftResult = halfBuild(
+				leftLine,
+				leftHL[leftIndex++] ?? leftLine.content,
+				wd.oldRanges,
+				"left",
+			);
+			rightResult = halfBuild(
+				rightLine,
+				rightHL[rightIndex++] ?? rightLine.content,
+				wd.newRanges,
+				"right",
+			);
+		} else if (
+			paired &&
+			wd &&
+			leftLine &&
+			rightLine &&
+			wd.similarity >= WORD_DIFF_MIN_SIM &&
+			!canHL
+		) {
 			const pwd = plainWordDiff(leftLine.content, rightLine.content);
 			leftIndex++;
 			rightIndex++;
@@ -5234,58 +6468,116 @@ async function renderSplit(
 		} else {
 			leftResult = halfBuild(
 				row.left,
-				row.left && row.left.type !== "sep" ? (leftHL[leftIndex++] ?? row.left.content) : "",
+				row.left && row.left.type !== "sep"
+					? (leftHL[leftIndex++] ?? row.left.content)
+					: "",
 				null,
 				"left",
 			);
 			rightResult = halfBuild(
 				row.right,
-				row.right && row.right.type !== "sep" ? (rightHL[rightIndex++] ?? row.right.content) : "",
+				row.right && row.right.type !== "sep"
+					? (rightHL[rightIndex++] ?? row.right.content)
+					: "",
 				null,
 				"right",
 			);
 		}
-		const maxRows = Math.max(leftResult.bodyRows.length, rightResult.bodyRows.length);
+		const maxRows = Math.max(
+			leftResult.bodyRows.length,
+			rightResult.bodyRows.length,
+		);
 		for (let rowIndex = 0; rowIndex < maxRows; rowIndex++) {
 			const lg = rowIndex === 0 ? leftResult.gutter : leftResult.contGutter;
 			const rg = rowIndex === 0 ? rightResult.gutter : rightResult.contGutter;
-			const lb = leftResult.bodyRows[rowIndex] ?? (!row.left ? stripes(cw) : `${BG_EMPTY}${" ".repeat(cw)}${D_RST}`);
-			const rb = rightResult.bodyRows[rowIndex] ?? (!row.right ? stripes(cw) : `${BG_EMPTY}${" ".repeat(cw)}${D_RST}`);
+			const lb =
+				leftResult.bodyRows[rowIndex] ??
+				(!row.left ? stripes(cw) : `${BG_EMPTY}${" ".repeat(cw)}${D_RST}`);
+			const rb =
+				rightResult.bodyRows[rowIndex] ??
+				(!row.right ? stripes(cw) : `${BG_EMPTY}${" ".repeat(cw)}${D_RST}`);
 			out.push(`${lg}${lb}${DIVIDER}${rg}${rb}`);
 		}
 	}
 
 	out.push(`${diffRule(half)}${FG_RULE}┊${D_RST}${diffRule(half)}`);
-	if (rows.length > vis.length) out.push(`${BG_BASE}${FG_DIM}  ${collapsedDiffHint(rows.length - vis.length, 0)}${D_RST}`);
+	if (rows.length > vis.length)
+		out.push(
+			`${BG_BASE}${FG_DIM}  ${collapsedDiffHint(rows.length - vis.length, 0)}${D_RST}`,
+		);
 	return out.join("\n");
 }
 
-function getEditOperations(input: any): Array<{ oldText: string; newText: string }> {
+function getEditOperations(
+	input: any,
+): Array<{ oldText: string; newText: string }> {
 	if (Array.isArray(input?.edits)) {
 		return input.edits
 			.map((edit: any) => ({
-				oldText: typeof edit?.oldText === "string" ? edit.oldText : typeof edit?.old_text === "string" ? edit.old_text : "",
-				newText: typeof edit?.newText === "string" ? edit.newText : typeof edit?.new_text === "string" ? edit.new_text : "",
+				oldText:
+					typeof edit?.oldText === "string"
+						? edit.oldText
+						: typeof edit?.old_text === "string"
+							? edit.old_text
+							: "",
+				newText:
+					typeof edit?.newText === "string"
+						? edit.newText
+						: typeof edit?.new_text === "string"
+							? edit.new_text
+							: "",
 			}))
-			.filter((edit: { oldText: string; newText: string }) => edit.oldText && edit.oldText !== edit.newText);
+			.filter(
+				(edit: { oldText: string; newText: string }) =>
+					edit.oldText && edit.oldText !== edit.newText,
+			);
 	}
-	const oldText = typeof input?.oldText === "string" ? input.oldText : typeof input?.old_text === "string" ? input.old_text : "";
-	const newText = typeof input?.newText === "string" ? input.newText : typeof input?.new_text === "string" ? input.new_text : "";
+	const oldText =
+		typeof input?.oldText === "string"
+			? input.oldText
+			: typeof input?.old_text === "string"
+				? input.old_text
+				: "";
+	const newText =
+		typeof input?.newText === "string"
+			? input.newText
+			: typeof input?.new_text === "string"
+				? input.new_text
+				: "";
 	return oldText && oldText !== newText ? [{ oldText, newText }] : [];
 }
 
-function summarizeEditOperations(operations: Array<{ oldText: string; newText: string }>) {
+function summarizeEditOperations(
+	operations: Array<{ oldText: string; newText: string }>,
+) {
 	const diffs = operations.map((edit) => parseDiff(edit.oldText, edit.newText));
 	const totalAdded = diffs.reduce((sum, diff) => sum + diff.added, 0);
 	const totalRemoved = diffs.reduce((sum, diff) => sum + diff.removed, 0);
 	const totalLines = diffs.reduce((sum, diff) => sum + diff.lines.length, 0);
-	const totalHunks = diffs.reduce((sum, diff) => sum + diff.lines.filter((l) => l.type === "sep").length + (diff.lines.length ? 1 : 0), 0);
-	return { diffs, totalAdded, totalRemoved, totalLines, totalHunks, summary: summarizeDiff(totalAdded, totalRemoved) };
+	const totalHunks = diffs.reduce(
+		(sum, diff) =>
+			sum +
+			diff.lines.filter((l) => l.type === "sep").length +
+			(diff.lines.length ? 1 : 0),
+		0,
+	);
+	return {
+		diffs,
+		totalAdded,
+		totalRemoved,
+		totalLines,
+		totalHunks,
+		summary: summarizeDiff(totalAdded, totalRemoved),
+	};
 }
 
 type EditOperationSummary = ReturnType<typeof summarizeEditOperations>;
 
-function getCachedEditOperationSummary(ctx: any, key: string, operations: Array<{ oldText: string; newText: string }>): EditOperationSummary {
+function getCachedEditOperationSummary(
+	ctx: any,
+	key: string,
+	operations: Array<{ oldText: string; newText: string }>,
+): EditOperationSummary {
 	if (ctx.state?._editSummaryKey === key && ctx.state._editSummary) {
 		return ctx.state._editSummary as EditOperationSummary;
 	}
@@ -5317,15 +6609,34 @@ function normalizeTextForFuzzyMatch(text: string): string {
 		.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ");
 }
 
-function findEditMatch(content: string, oldText: string): { found: boolean; index: number; matchLength: number; usedFuzzyMatch: boolean } {
+function findEditMatch(
+	content: string,
+	oldText: string,
+): {
+	found: boolean;
+	index: number;
+	matchLength: number;
+	usedFuzzyMatch: boolean;
+} {
 	const exactIndex = content.indexOf(oldText);
-	if (exactIndex !== -1) return { found: true, index: exactIndex, matchLength: oldText.length, usedFuzzyMatch: false };
+	if (exactIndex !== -1)
+		return {
+			found: true,
+			index: exactIndex,
+			matchLength: oldText.length,
+			usedFuzzyMatch: false,
+		};
 	const fuzzyContent = normalizeTextForFuzzyMatch(content);
 	const fuzzyOldText = normalizeTextForFuzzyMatch(oldText);
 	const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
 	return fuzzyIndex === -1
 		? { found: false, index: -1, matchLength: 0, usedFuzzyMatch: false }
-		: { found: true, index: fuzzyIndex, matchLength: fuzzyOldText.length, usedFuzzyMatch: true };
+		: {
+				found: true,
+				index: fuzzyIndex,
+				matchLength: fuzzyOldText.length,
+				usedFuzzyMatch: true,
+			};
 }
 
 function countFuzzyOccurrences(content: string, oldText: string): number {
@@ -5342,17 +6653,23 @@ function countLineBreaks(text: string): number {
 	return (text.match(/\n/g) ?? []).length;
 }
 
-function offsetParsedDiff(diff: ParsedDiff, oldOffset: number, newOffset = oldOffset): ParsedDiff {
+function offsetParsedDiff(
+	diff: ParsedDiff,
+	oldOffset: number,
+	newOffset?: number,
+): ParsedDiff {
+	const resolvedNewOffset = newOffset ?? oldOffset;
 	return {
 		...diff,
 		lines: diff.lines.map((line) =>
 			line.type === "sep"
 				? line
 				: {
-					...line,
-					oldNum: line.oldNum === null ? null : line.oldNum + oldOffset,
-					newNum: line.newNum === null ? null : line.newNum + newOffset,
-				},
+						...line,
+						oldNum: line.oldNum === null ? null : line.oldNum + oldOffset,
+						newNum:
+							line.newNum === null ? null : line.newNum + resolvedNewOffset,
+					},
 		),
 	};
 }
@@ -5371,7 +6688,9 @@ function getFirstChangedNewLine(diff: ParsedDiff): number {
 		}
 		if (line.type === "add") return line.newNum ?? currentNewLine;
 		if (currentNewLine > 0) return currentNewLine;
-		const next = diff.lines.slice(i + 1).find((entry) => entry.type !== "sep" && entry.newNum !== null);
+		const next = diff.lines
+			.slice(i + 1)
+			.find((entry) => entry.type !== "sep" && entry.newNum !== null);
 		if (next && next.newNum !== null) return next.newNum;
 		return line.oldNum ?? 0;
 	}
@@ -5383,34 +6702,68 @@ interface LocalizedEditDiff {
 	line: number;
 }
 
-async function computeLocalizedEditDiffs(filePath: string, operations: Array<{ oldText: string; newText: string }>, cwd: string): Promise<LocalizedEditDiff[] | null> {
+async function computeLocalizedEditDiffs(
+	filePath: string,
+	operations: Array<{ oldText: string; newText: string }>,
+	cwd: string,
+): Promise<LocalizedEditDiff[] | null> {
 	if (!filePath || operations.length === 0) return null;
 	try {
 		const rawContent = await readFileAsync(resolve(cwd, filePath), "utf8");
 		const normalizedContent = normalizeToLf(stripBomText(rawContent));
-		const normalizedOps = operations.map((edit) => ({ oldText: normalizeToLf(edit.oldText), newText: normalizeToLf(edit.newText) }));
-		const baseContent = normalizedOps.some((edit) => findEditMatch(normalizedContent, edit.oldText).usedFuzzyMatch)
+		const normalizedOps = operations.map((edit) => ({
+			oldText: normalizeToLf(edit.oldText),
+			newText: normalizeToLf(edit.newText),
+		}));
+		const baseContent = normalizedOps.some(
+			(edit) => findEditMatch(normalizedContent, edit.oldText).usedFuzzyMatch,
+		)
 			? normalizeTextForFuzzyMatch(normalizedContent)
 			: normalizedContent;
 		const matches = normalizedOps.map((edit, editIndex) => {
 			const match = findEditMatch(baseContent, edit.oldText);
-			if (!match.found || countFuzzyOccurrences(baseContent, edit.oldText) !== 1) return null;
-			return { editIndex, matchIndex: match.index, matchLength: match.matchLength, newText: edit.newText };
+			if (
+				!match.found ||
+				countFuzzyOccurrences(baseContent, edit.oldText) !== 1
+			)
+				return null;
+			return {
+				editIndex,
+				matchIndex: match.index,
+				matchLength: match.matchLength,
+				newText: edit.newText,
+			};
 		});
 		if (matches.some((match) => match === null)) return null;
-		const ordered = [...(matches as Array<{ editIndex: number; matchIndex: number; matchLength: number; newText: string }>)].sort((a, b) => a.matchIndex - b.matchIndex);
+		const ordered = [
+			...(matches as Array<{
+				editIndex: number;
+				matchIndex: number;
+				matchLength: number;
+				newText: string;
+			}>),
+		].sort((a, b) => a.matchIndex - b.matchIndex);
 		for (let i = 1; i < ordered.length; i++) {
 			const prev = ordered[i - 1];
 			const current = ordered[i];
 			if (prev.matchIndex + prev.matchLength > current.matchIndex) return null;
 		}
-		const localized: Array<LocalizedEditDiff | null> = Array(operations.length).fill(null);
+		const localized: Array<LocalizedEditDiff | null> = Array(
+			operations.length,
+		).fill(null);
 		let lineDelta = 0;
 		for (const match of ordered) {
-			const oldChunk = baseContent.slice(match.matchIndex, match.matchIndex + match.matchLength);
+			const oldChunk = baseContent.slice(
+				match.matchIndex,
+				match.matchIndex + match.matchLength,
+			);
 			const oldStartLine = lineNumberAtIndex(baseContent, match.matchIndex);
 			const newStartLine = oldStartLine + lineDelta;
-			const diff = offsetParsedDiff(parseDiff(oldChunk, match.newText), oldStartLine - 1, newStartLine - 1);
+			const diff = offsetParsedDiff(
+				parseDiff(oldChunk, match.newText),
+				oldStartLine - 1,
+				newStartLine - 1,
+			);
 			localized[match.editIndex] = { diff, line: getFirstChangedNewLine(diff) };
 			lineDelta += countLineBreaks(match.newText) - countLineBreaks(oldChunk);
 		}
@@ -5435,51 +6788,79 @@ function renderEditPreviewBody(
 	if (operations.length === 1) {
 		const [diff] = diffs;
 		const line = lines[0] ?? getFirstChangedNewLine(diff);
-		renderSplit(diff, language, ctx.expanded ? MAX_PREVIEW_LINES : (diffCollapsedLimit() ?? 32), dc, branchWidth)
+		renderSplit(
+			diff,
+			language,
+			ctx.expanded ? MAX_PREVIEW_LINES : (diffCollapsedLimit() ?? 32),
+			dc,
+			branchWidth,
+		)
 			.then((rendered) => {
 				if (ctx.state._pk !== key) return;
 				ctx.state._ptBody = `${summarizeDiff(diff.added, diff.removed)}${formatLineMeta(line, theme)}\n${rendered}`;
-				ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+				ctx.state._ptDisplay = indentBranchBlock(
+					withBranch(ctx.state._ptBody, theme, false, true),
+				);
 				safeInvalidate(ctx);
 			})
 			.catch(() => {
 				if (ctx.state._pk !== key) return;
 				ctx.state._ptBody = `${summarizeDiff(diff.added, diff.removed)}${formatLineMeta(line, theme)}`;
-				ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+				ctx.state._ptDisplay = indentBranchBlock(
+					withBranch(ctx.state._ptBody, theme, false, true),
+				);
 				safeInvalidate(ctx);
 			});
 		return;
 	}
-	const maxShown = ctx.expanded ? operations.length : Math.min(operations.length, 3);
+	const maxShown = ctx.expanded
+		? operations.length
+		: Math.min(operations.length, 3);
 	const previewLines = ctx.expanded
 		? Math.max(6, Math.floor(MAX_RENDER_LINES / Math.max(1, maxShown)))
 		: collapsedMultiOpLines(maxShown);
-	mapWithConcurrency(diffs.slice(0, maxShown), DIFF_RENDER_CONCURRENCY, async (diff, index) => {
-		const line = lines[index] ?? getFirstChangedNewLine(diff);
-		return renderSplit(diff, language, previewLines, dc, branchWidth)
-			.then((rendered) => `Edit ${index + 1}/${operations.length}${formatLineMeta(line, theme)}\n${rendered}`)
-			.catch(() => `Edit ${index + 1}/${operations.length}${formatLineMeta(line, theme)} ${summarizeDiff(diff.added, diff.removed)}`);
-	})
+	mapWithConcurrency(
+		diffs.slice(0, maxShown),
+		DIFF_RENDER_CONCURRENCY,
+		async (diff, index) => {
+			const line = lines[index] ?? getFirstChangedNewLine(diff);
+			return renderSplit(diff, language, previewLines, dc, branchWidth)
+				.then(
+					(rendered) =>
+						`Edit ${index + 1}/${operations.length}${formatLineMeta(line, theme)}\n${rendered}`,
+				)
+				.catch(
+					() =>
+						`Edit ${index + 1}/${operations.length}${formatLineMeta(line, theme)} ${summarizeDiff(diff.added, diff.removed)}`,
+				);
+		},
+	)
 		.then((sections) => {
 			if (ctx.state._pk !== key) return;
 			const remainder = operations.length - maxShown;
-			const suffix = remainder > 0
-				? `\n${theme.fg("muted", `… ${remainder} more edit blocks${toolOutputDetailHint(theme, ctx.expanded, true)}`)}`
-				: "";
+			const suffix =
+				remainder > 0
+					? `\n${theme.fg("muted", `… ${remainder} more edit blocks${toolOutputDetailHint(theme, ctx.expanded, true)}`)}`
+					: "";
 			ctx.state._ptBody = `${operations.length} edits ${summary}\n\n${sections.join("\n\n")}${suffix}`;
-			ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+			ctx.state._ptDisplay = indentBranchBlock(
+				withBranch(ctx.state._ptBody, theme, false, true),
+			);
 			safeInvalidate(ctx);
 		})
 		.catch(() => {
 			if (ctx.state._pk !== key) return;
 			ctx.state._ptBody = `${operations.length} edits ${summary}`;
-			ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+			ctx.state._ptDisplay = indentBranchBlock(
+				withBranch(ctx.state._ptBody, theme, false, true),
+			);
 			safeInvalidate(ctx);
 		});
 }
 
 function stripThinkingPresentationArtifacts(text: string): string {
-	if (!ANSI_PRESENT_RE.test(text) && !/^\s*thinking:\s*/i.test(text)) return text;
+	if (!ANSI_PRESENT_RE.test(text) && !/^\s*thinking:\s*/i.test(text))
+		return text;
 	let current = ANSI_PRESENT_RE.test(text) ? text.replace(ANSI_RE, "") : text;
 	while (true) {
 		const next = current.replace(/^(?:thinking:\s*)+/i, "").trimStart();
@@ -5489,7 +6870,11 @@ function stripThinkingPresentationArtifacts(text: string): string {
 }
 
 function prefixThinkingLine(text: string, _theme: Theme | undefined): string {
-	if (!ANSI_PRESENT_RE.test(text) && text.startsWith("Thinking: ") && !/^Thinking:\s*thinking:\s*/i.test(text)) {
+	if (
+		!ANSI_PRESENT_RE.test(text) &&
+		text.startsWith("Thinking: ") &&
+		!/^Thinking:\s*thinking:\s*/i.test(text)
+	) {
 		return text;
 	}
 	const normalized = stripThinkingPresentationArtifacts(text).trim();
@@ -5497,14 +6882,20 @@ function prefixThinkingLine(text: string, _theme: Theme | undefined): string {
 	return `Thinking: ${normalized}`;
 }
 
-export function trackThinkingBlockEvents(event: any, ctx?: any, now = Date.now()): void {
+export function trackThinkingBlockEvents(
+	event: any,
+	ctx?: any,
+	now = Date.now(),
+): void {
 	const evt = event?.assistantMessageEvent;
 	if (!evt || typeof evt.type !== "string") return;
 	function refreshThinkingChrome(): void {
 		try {
 			ctx?.ui?.invalidate?.();
 			ctx?.ui?.requestRender?.();
-		} catch { /* noop */ }
+		} catch {
+			/* noop */
+		}
 	}
 
 	if (evt.type === "thinking_start") {
@@ -5517,7 +6908,8 @@ export function trackThinkingBlockEvents(event: any, ctx?: any, now = Date.now()
 	if (evt.type === "thinking_end") {
 		thinkingBlockInFlight = false;
 		const duration = now - thinkingBlockStartMs;
-		lastThinkingBlockDurationMs = duration >= MIN_THINKING_SUMMARY_MS ? duration : undefined;
+		lastThinkingBlockDurationMs =
+			duration >= MIN_THINKING_SUMMARY_MS ? duration : undefined;
 		refreshThinkingChrome();
 	}
 }
@@ -5538,9 +6930,18 @@ export function registerThinkingLabels(pi: ExtensionAPI): void {
 		// active pi theme. Cheap when the theme hasn't changed (identity check).
 		if (theme) applyThemePaletteIfNeeded(theme);
 		const message = event?.message;
-		if (!message || message.role !== "assistant" || !Array.isArray(message.content)) return;
+		if (
+			!message ||
+			message.role !== "assistant" ||
+			!Array.isArray(message.content)
+		)
+			return;
 		for (const block of message.content) {
-			if (block && block.type === "thinking" && typeof block.thinking === "string") {
+			if (
+				block &&
+				block.type === "thinking" &&
+				typeof block.thinking === "string"
+			) {
 				block.thinking = prefixThinkingLine(block.thinking, theme);
 			}
 		}
@@ -5582,19 +6983,25 @@ export function registerThinkingLabels(pi: ExtensionAPI): void {
 		const message = (event as any)?.message;
 		if (message?.role === "assistant") {
 			applyThinkingBlockMetadata(message);
-			const started = typeof currentAgentWorkStartMs === "number"
-				? currentAgentWorkStartMs
-				: typeof (message as any)[WORKED_START_KEY] === "number"
-					? (message as any)[WORKED_START_KEY]
-					: currentAssistantMessageStartMs;
+			const started =
+				typeof currentAgentWorkStartMs === "number"
+					? currentAgentWorkStartMs
+					: typeof (message as any)[WORKED_START_KEY] === "number"
+						? (message as any)[WORKED_START_KEY]
+						: currentAssistantMessageStartMs;
 			const isFinalAssistantMessage = message.stopReason === "stop";
 			if (started !== undefined && isFinalAssistantMessage) {
 				const durationMs = Date.now() - started;
-				const sessionTotalMs = typeof sessionStartMs === "number" ? Date.now() - sessionStartMs : undefined;
+				const sessionTotalMs =
+					typeof sessionStartMs === "number"
+						? Date.now() - sessionStartMs
+						: undefined;
 				const turns = userTurnCount > 0 ? userTurnCount : undefined;
 				(message as any)[WORKED_DURATION_KEY] = durationMs;
-				if (typeof sessionTotalMs === "number") (message as any)[WORKED_SESSION_TOTAL_KEY] = sessionTotalMs;
-				if (typeof turns === "number") (message as any)[WORKED_TURNS_KEY] = turns;
+				if (typeof sessionTotalMs === "number")
+					(message as any)[WORKED_SESSION_TOTAL_KEY] = sessionTotalMs;
+				if (typeof turns === "number")
+					(message as any)[WORKED_TURNS_KEY] = turns;
 				// Mutate the message itself before pi renders/persists it. This is more
 				// reliable than the spinner because pi removes the loader on agent_end,
 				// and more reliable than component monkey-patching when extensions are
@@ -5634,17 +7041,26 @@ export function registerThinkingLabels(pi: ExtensionAPI): void {
 			if (!msg) continue;
 			if (msg.role === "user") userCount++;
 			if (typeof msg.timestamp === "number" && Number.isFinite(msg.timestamp)) {
-				if (earliest === undefined || msg.timestamp < earliest) earliest = msg.timestamp;
+				if (earliest === undefined || msg.timestamp < earliest)
+					earliest = msg.timestamp;
 			}
 		}
 		if (earliest !== undefined) {
-			sessionStartMs = sessionStartMs === undefined ? earliest : Math.min(sessionStartMs, earliest);
+			sessionStartMs =
+				sessionStartMs === undefined
+					? earliest
+					: Math.min(sessionStartMs, earliest);
 		}
 		if (userCount > userTurnCount) userTurnCount = userCount;
 		for (const msg of messages) {
-			if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+			if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content))
+				continue;
 			for (const block of msg.content) {
-				if (block && block.type === "thinking" && typeof block.thinking === "string") {
+				if (
+					block &&
+					block.type === "thinking" &&
+					typeof block.thinking === "string"
+				) {
 					block.thinking = stripThinkingPresentationArtifacts(block.thinking);
 				}
 				if (block && block.type === "text" && typeof block.text === "string") {
@@ -5655,11 +7071,26 @@ export function registerThinkingLabels(pi: ExtensionAPI): void {
 	});
 }
 
-function getMode<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
-	return typeof value === "string" && (allowed as readonly string[]).includes(value) ? (value as T) : fallback;
+function getMode<T extends string>(
+	value: unknown,
+	allowed: readonly T[],
+	fallback: T,
+): T {
+	return typeof value === "string" &&
+		(allowed as readonly string[]).includes(value)
+		? (value as T)
+		: fallback;
 }
 
-const CORE_TOOL_OVERRIDES = new Set(["read", "bash", "grep", "find", "ls", "write", "edit"]);
+const CORE_TOOL_OVERRIDES = new Set([
+	"read",
+	"bash",
+	"grep",
+	"find",
+	"ls",
+	"write",
+	"edit",
+]);
 
 const OPENAI_STYLE_TOOL_NAMES = new Set([
 	"apply_patch",
@@ -5707,14 +7138,16 @@ const OPENAI_STYLE_TOOL_NAMES = new Set([
 function isMcpToolCandidate(tool: unknown): boolean {
 	const rec = tool as Record<string, unknown> | undefined;
 	const name = typeof rec?.name === "string" ? rec.name : "";
-	const description = typeof rec?.description === "string" ? rec.description : "";
+	const description =
+		typeof rec?.description === "string" ? rec.description : "";
 	return name === "mcp" || /\bmcp\b/i.test(description);
 }
 
 function isOpenAiToolCandidate(tool: unknown): boolean {
 	const rec = tool as Record<string, unknown> | undefined;
 	const name = typeof rec?.name === "string" ? rec.name : "";
-	if (!name || CORE_TOOL_OVERRIDES.has(name) || isMcpToolCandidate(tool)) return false;
+	if (!name || CORE_TOOL_OVERRIDES.has(name) || isMcpToolCandidate(tool))
+		return false;
 	return OPENAI_STYLE_TOOL_NAMES.has(name);
 }
 
@@ -5726,44 +7159,86 @@ function humanizeToolName(name: string): string {
 }
 
 function isMcpToolName(name: string): boolean {
-	return name === "mcp" || /^mcp[_:-]/i.test(name) || /[_:-]mcp[_:-]/i.test(name);
+	return (
+		name === "mcp" || /^mcp[_:-]/i.test(name) || /[_:-]mcp[_:-]/i.test(name)
+	);
 }
 
 function shouldUseGenericToolRenderer(name: unknown): boolean {
-	return typeof name === "string" && name.length > 0 && !CORE_TOOL_OVERRIDES.has(name);
+	return (
+		typeof name === "string" &&
+		name.length > 0 &&
+		!CORE_TOOL_OVERRIDES.has(name)
+	);
 }
 
 function genericToolLabel(name: string): string {
 	return isMcpToolName(name) ? "MCP" : humanizeToolName(name);
 }
 
-function renderGenericToolCall(name: string, args: any, theme: Theme, ctx: any): Text {
+function renderGenericToolCall(
+	name: string,
+	args: any,
+	theme: Theme,
+	ctx: any,
+): Text {
 	syncToolCallStatus(ctx);
 	ctx.state._openAiPatchFiles = [];
+	if (BUNDLED_TASK_TOOL_NAMES.has(name)) {
+		return makeText(ctx.lastComponent, "");
+	}
 	// Agent / subagent tools get a size-breathing pending marker, not on/off ●.
 	if (isAgentFamilyToolName(name)) ctx.state._agentBreathe = true;
 	const sp = (path: string) => shortPath(ctx.cwd ?? process.cwd(), path);
-	const summary = stableCallSummary(ctx, "_callSummary", () => summarizeGenericToolCall(name, args, theme, sp));
+	const summary = stableCallSummary(ctx, "_callSummary", () =>
+		summarizeGenericToolCall(name, args, theme, sp),
+	);
 	// Claude-style Skill(name) — no space between label and parens.
-	if (name === "Skill" || (typeof summary === "string" && summary.startsWith("\0skill:"))) {
+	if (
+		name === "Skill" ||
+		(typeof summary === "string" && summary.startsWith("\0skill:"))
+	) {
 		const skillName =
 			typeof summary === "string" && summary.startsWith("\0skill:")
 				? summary.slice("\0skill:".length)
 				: getStringArg(args, "name") || "skill";
 		return makeText(
 			ctx.lastComponent,
-			skillHeader(skillName, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+			skillHeader(
+				skillName,
+				theme,
+				toolStatusDot(ctx, theme),
+				liveLineCountTrailing(ctx, theme),
+			),
 		);
 	}
 	return makeText(
 		ctx.lastComponent,
-		toolHeader(genericToolLabel(name), summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+		toolHeader(
+			genericToolLabel(name),
+			summary,
+			theme,
+			toolStatusDot(ctx, theme),
+			liveLineCountTrailing(ctx, theme),
+		),
 	);
 }
 
-function renderGenericToolResult(name: string, result: any, options: any, theme: Theme, ctx: any): Text {
+function renderGenericToolResult(
+	name: string,
+	result: any,
+	options: any,
+	theme: Theme,
+	ctx: any,
+): Text {
 	if (isMcpToolName(name)) {
-		return renderMcpToolResult(result, !!options?.expanded, !!options?.isPartial, theme, ctx);
+		return renderMcpToolResult(
+			result,
+			!!options?.expanded,
+			!!options?.isPartial,
+			theme,
+			ctx,
+		);
 	}
 	return renderOpenAiToolResult(
 		name,
@@ -5778,12 +7253,17 @@ function renderGenericToolResult(name: string, result: any, options: any, theme:
 function getTextContent(result: any): string {
 	if (!Array.isArray(result?.content)) return "";
 	return result.content
-		.filter((block: any) => block?.type === "text" && typeof block.text === "string")
+		.filter(
+			(block: any) => block?.type === "text" && typeof block.text === "string",
+		)
 		.map((block: any) => block.text)
 		.join("\n");
 }
 
-function collectNonEmptyLines(text: string, tailLimit?: number): { lines: string[]; total: number } {
+function collectNonEmptyLines(
+	text: string,
+	tailLimit?: number,
+): { lines: string[]; total: number } {
 	const keepTail = typeof tailLimit === "number" && Number.isFinite(tailLimit);
 	const limit = keepTail ? Math.max(0, Math.floor(tailLimit)) : 0;
 	const lines: string[] = [];
@@ -5818,7 +7298,12 @@ function runningPreviewBlock(
 	expanded: boolean,
 	theme: Theme,
 	ctx: any,
-	options: { lines?: string[]; totalLineCount?: number; styleLine?: (line: string) => string; tail?: boolean } = {},
+	options: {
+		lines?: string[];
+		totalLineCount?: number;
+		styleLine?: (line: string) => string;
+		tail?: boolean;
+	} = {},
 ): string {
 	// Keep the header status dot blinking while partial output streams. Call/result
 	// renderers share rendererState, so setupBlinkTimer here re-arms the same key
@@ -5855,15 +7340,27 @@ function runningPreviewBlock(
 		return "";
 	}
 
-	const styleLine = options.styleLine ?? ((line: string) => theme.fg("dim", line || " "));
+	const styleLine =
+		options.styleLine ?? ((line: string) => theme.fg("dim", line || " "));
 	// Prefer pre-collected tail lines; otherwise only take what the preview needs.
-	const previewSource = options.tail && !expanded
-		? (lines.length > limit ? lines.slice(-limit) : lines)
-		: lines;
+	const previewSource =
+		options.tail && !expanded
+			? lines.length > limit
+				? lines.slice(-limit)
+				: lines
+			: lines;
 	// For tail previews the "earlier lines" prefix owns the remaining count — pass
 	// previewSource.length so buildPreviewText doesn't also append "more lines".
-	const previewTotal = options.tail && !expanded ? previewSource.length : totalLineCount;
-	let preview = buildPreviewText(previewSource, expanded, theme, limit, previewTotal, styleLine);
+	const previewTotal =
+		options.tail && !expanded ? previewSource.length : totalLineCount;
+	let preview = buildPreviewText(
+		previewSource,
+		expanded,
+		theme,
+		limit,
+		previewTotal,
+		styleLine,
+	);
 	if (options.tail && !expanded && totalLineCount > previewSource.length) {
 		preview = `${theme.fg("muted", `... (${totalLineCount - previewSource.length} earlier lines${toolOutputDetailHint(theme, expanded, true)})`)}\n${preview}`;
 	}
@@ -5898,7 +7395,10 @@ function getStringArrayArg(args: any, ...keys: string[]): string[] {
 	for (const key of keys) {
 		const value = args?.[key];
 		if (!Array.isArray(value)) continue;
-		const items = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+		const items = value.filter(
+			(item): item is string =>
+				typeof item === "string" && item.trim().length > 0,
+		);
 		if (items.length > 0) return items;
 	}
 	return [];
@@ -5907,7 +7407,9 @@ function getStringArrayArg(args: any, ...keys: string[]): string[] {
 function extractApplyPatchFiles(patchText: string): string[] {
 	if (!patchText) return [];
 	const files = new Set<string>();
-	for (const match of patchText.matchAll(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm)) {
+	for (const match of patchText.matchAll(
+		/^\*\*\* (?:Add|Update|Delete) File: (.+)$/gm,
+	)) {
 		const filePath = match[1]?.trim();
 		if (filePath) files.add(filePath);
 	}
@@ -5951,7 +7453,9 @@ interface ApplyPatchResultMeta {
 	};
 }
 
-function buildApplyPatchResultMeta(preview: ApplyPatchPreview): ApplyPatchResultMeta {
+function buildApplyPatchResultMeta(
+	preview: ApplyPatchPreview,
+): ApplyPatchResultMeta {
 	const firstChange = preview.changes[0];
 	return {
 		changeCount: preview.changes.length,
@@ -5961,27 +7465,38 @@ function buildApplyPatchResultMeta(preview: ApplyPatchPreview): ApplyPatchResult
 		totalLines: preview.totalLines,
 		firstChange: firstChange
 			? {
-				displayPath: firstChange.displayPath,
-				kind: firstChange.kind,
-				hunks: firstChange.hunks,
-				line: firstChange.line,
-				added: firstChange.diff.added,
-				removed: firstChange.diff.removed,
-			}
+					displayPath: firstChange.displayPath,
+					kind: firstChange.kind,
+					hunks: firstChange.hunks,
+					line: firstChange.line,
+					added: firstChange.diff.added,
+					removed: firstChange.diff.removed,
+				}
 			: undefined,
 	};
 }
 
 function countDiffHunks(diff: ParsedDiff): number {
-	return diff.lines.length === 0 ? 0 : diff.lines.filter((line) => line.type === "sep").length + 1;
+	return diff.lines.length === 0
+		? 0
+		: diff.lines.filter((line) => line.type === "sep").length + 1;
 }
 
-function getApplyPatchLine(diff: ParsedDiff, kind: ApplyPatchChangePreview["kind"]): number {
+function getApplyPatchLine(
+	diff: ParsedDiff,
+	kind: ApplyPatchChangePreview["kind"],
+): number {
 	if (kind === "add") {
-		return diff.lines.find((line) => line.type === "add" && line.newNum !== null)?.newNum ?? 1;
+		return (
+			diff.lines.find((line) => line.type === "add" && line.newNum !== null)
+				?.newNum ?? 1
+		);
 	}
 	if (kind === "delete") {
-		return diff.lines.find((line) => line.type === "del" && line.oldNum !== null)?.oldNum ?? 1;
+		return (
+			diff.lines.find((line) => line.type === "del" && line.oldNum !== null)
+				?.oldNum ?? 1
+		);
 	}
 	for (const line of diff.lines) {
 		if (line.type === "add" && line.newNum !== null) return line.newNum;
@@ -5990,15 +7505,27 @@ function getApplyPatchLine(diff: ParsedDiff, kind: ApplyPatchChangePreview["kind
 	return 0;
 }
 
-function parsePatchBodyLine(rawLine: string): { marker: "+" | "-" | " "; content: string } {
+function parsePatchBodyLine(rawLine: string): {
+	marker: "+" | "-" | " ";
+	content: string;
+} {
 	const marker = rawLine[0];
-	if (marker === "+" || marker === "-" || marker === " ") return { marker, content: rawLine.slice(1) };
+	if (marker === "+" || marker === "-" || marker === " ")
+		return { marker, content: rawLine.slice(1) };
 	return { marker: " ", content: rawLine };
 }
 
-function findLineSequence(haystack: string[], needle: string[], fromIndex = 0): number {
+function findLineSequence(
+	haystack: string[],
+	needle: string[],
+	fromIndex = 0,
+): number {
 	if (needle.length === 0) return Math.max(0, fromIndex);
-	outer: for (let i = Math.max(0, fromIndex); i <= haystack.length - needle.length; i++) {
+	outer: for (
+		let i = Math.max(0, fromIndex);
+		i <= haystack.length - needle.length;
+		i++
+	) {
 		for (let j = 0; j < needle.length; j++) {
 			if (haystack[i + j] !== needle[j]) continue outer;
 		}
@@ -6007,7 +7534,10 @@ function findLineSequence(haystack: string[], needle: string[], fromIndex = 0): 
 	return -1;
 }
 
-function inferApplyPatchHunkStarts(lines: string[], sourceContent: string): Array<{ oldStart: number | null; newStart: number | null }> {
+function inferApplyPatchHunkStarts(
+	lines: string[],
+	sourceContent: string,
+): Array<{ oldStart: number | null; newStart: number | null }> {
 	const sourceLines = normalizeToLf(sourceContent).split("\n");
 	const hunks: string[][] = [];
 	let currentHunk: string[] | null = null;
@@ -6023,7 +7553,8 @@ function inferApplyPatchHunkStarts(lines: string[], sourceContent: string): Arra
 	}
 	if (currentHunk) hunks.push(currentHunk);
 
-	const starts: Array<{ oldStart: number | null; newStart: number | null }> = [];
+	const starts: Array<{ oldStart: number | null; newStart: number | null }> =
+		[];
 	let searchFrom = 0;
 	let lineDelta = 0;
 	for (const hunk of hunks) {
@@ -6032,14 +7563,19 @@ function inferApplyPatchHunkStarts(lines: string[], sourceContent: string): Arra
 			.filter((line) => line.marker !== "+")
 			.map((line) => line.content);
 		let matchIndex = findLineSequence(sourceLines, oldLines, searchFrom);
-		if (matchIndex === -1) matchIndex = findLineSequence(sourceLines, oldLines, 0);
+		if (matchIndex === -1)
+			matchIndex = findLineSequence(sourceLines, oldLines, 0);
 		const oldStart = matchIndex === -1 ? null : matchIndex + 1;
 		const newStart = oldStart === null ? null : oldStart + lineDelta;
 		starts.push({ oldStart, newStart });
 		if (matchIndex === -1) continue;
 		searchFrom = matchIndex + oldLines.length;
-		const added = hunk.filter((rawLine) => parsePatchBodyLine(rawLine).marker === "+").length;
-		const removed = hunk.filter((rawLine) => parsePatchBodyLine(rawLine).marker === "-").length;
+		const added = hunk.filter(
+			(rawLine) => parsePatchBodyLine(rawLine).marker === "+",
+		).length;
+		const removed = hunk.filter(
+			(rawLine) => parsePatchBodyLine(rawLine).marker === "-",
+		).length;
 		lineDelta += added - removed;
 	}
 	return starts;
@@ -6056,7 +7592,10 @@ function trimDiffSeparators(lines: DiffLine[]): DiffLine[] {
 	return trimmed;
 }
 
-function parseApplyPatchUpdateDiff(lines: string[], sourceContent?: string): ParsedDiff {
+function parseApplyPatchUpdateDiff(
+	lines: string[],
+	sourceContent?: string,
+): ParsedDiff {
 	const diffLines: DiffLine[] = [];
 	let added = 0;
 	let removed = 0;
@@ -6064,17 +7603,32 @@ function parseApplyPatchUpdateDiff(lines: string[], sourceContent?: string): Par
 	let oldLine: number | null = null;
 	let newLine: number | null = null;
 	let inHunk = false;
-	const inferredStarts = sourceContent ? inferApplyPatchHunkStarts(lines, sourceContent) : [];
+	const inferredStarts = sourceContent
+		? inferApplyPatchHunkStarts(lines, sourceContent)
+		: [];
 	let hunkIndex = 0;
 
 	for (const rawLine of lines) {
 		if (rawLine.startsWith("*** Move to: ")) continue;
 		if (rawLine.startsWith("@@")) {
-			if (diffLines.length > 0 && diffLines[diffLines.length - 1]?.type !== "sep") {
-				diffLines.push({ type: "sep", oldNum: null, newNum: null, content: "" });
+			if (
+				diffLines.length > 0 &&
+				diffLines[diffLines.length - 1]?.type !== "sep"
+			) {
+				diffLines.push({
+					type: "sep",
+					oldNum: null,
+					newNum: null,
+					content: "",
+				});
 			}
-			const match = rawLine.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/);
-			const inferred = inferredStarts[hunkIndex] ?? { oldStart: null, newStart: null };
+			const match = rawLine.match(
+				/^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/,
+			);
+			const inferred = inferredStarts[hunkIndex] ?? {
+				oldStart: null,
+				newStart: null,
+			};
 			oldLine = match ? Number.parseInt(match[1], 10) : inferred.oldStart;
 			newLine = match ? Number.parseInt(match[2], 10) : inferred.newStart;
 			hunkIndex++;
@@ -6083,7 +7637,10 @@ function parseApplyPatchUpdateDiff(lines: string[], sourceContent?: string): Par
 		}
 		if (rawLine === "\\ No newline at end of file") continue;
 		if (!inHunk) {
-			const inferred = inferredStarts[hunkIndex] ?? { oldStart: null, newStart: null };
+			const inferred = inferredStarts[hunkIndex] ?? {
+				oldStart: null,
+				newStart: null,
+			};
 			oldLine = inferred.oldStart;
 			newLine = inferred.newStart;
 			hunkIndex++;
@@ -6118,7 +7675,11 @@ function parseApplyPatchUpdateDiff(lines: string[], sourceContent?: string): Par
 	};
 }
 
-function parseApplyPatchPreview(patchText: string, sp: (path: string) => string, cwd = process.cwd()): ApplyPatchPreview {
+function parseApplyPatchPreview(
+	patchText: string,
+	sp: (path: string) => string,
+	cwd = process.cwd(),
+): ApplyPatchPreview {
 	const normalized = patchText.replace(/\r\n/g, "\n");
 	const lines = normalized.split("\n");
 	const changes: ApplyPatchChangePreview[] = [];
@@ -6146,7 +7707,11 @@ function parseApplyPatchPreview(patchText: string, sp: (path: string) => string,
 
 		let moveTo: string | undefined;
 		const body: string[] = [];
-		while (index < lines.length && !fileHeader.test(lines[index]) && !endHeader.test(lines[index])) {
+		while (
+			index < lines.length &&
+			!fileHeader.test(lines[index]) &&
+			!endHeader.test(lines[index])
+		) {
 			if (lines[index].startsWith("*** Move to: ")) {
 				moveTo = lines[index].slice("*** Move to: ".length).trim();
 				index++;
@@ -6156,7 +7721,9 @@ function parseApplyPatchPreview(patchText: string, sp: (path: string) => string,
 			index++;
 		}
 
-		const displayPath = moveTo ? `${sp(path)} ${BORDER_COLOR}→${TRANSPARENT_RESET} ${sp(moveTo)}` : sp(path);
+		const displayPath = moveTo
+			? `${sp(path)} ${BORDER_COLOR}→${TRANSPARENT_RESET} ${sp(moveTo)}`
+			: sp(path);
 		let sourceContent: string | undefined;
 		if (kind === "update") {
 			try {
@@ -6165,11 +7732,18 @@ function parseApplyPatchPreview(patchText: string, sp: (path: string) => string,
 				sourceContent = undefined;
 			}
 		}
-		const diff = kind === "add"
-			? parseDiff("", body.map((entry) => stripPatchLinePrefix(entry, "+")).join("\n"))
-			: kind === "delete"
-				? parseDiff(body.map((entry) => stripPatchLinePrefix(entry, "-")).join("\n"), "")
-				: parseApplyPatchUpdateDiff(body, sourceContent);
+		const diff =
+			kind === "add"
+				? parseDiff(
+						"",
+						body.map((entry) => stripPatchLinePrefix(entry, "+")).join("\n"),
+					)
+				: kind === "delete"
+					? parseDiff(
+							body.map((entry) => stripPatchLinePrefix(entry, "-")).join("\n"),
+							"",
+						)
+					: parseApplyPatchUpdateDiff(body, sourceContent);
 		changes.push({
 			kind,
 			path,
@@ -6183,10 +7757,19 @@ function parseApplyPatchPreview(patchText: string, sp: (path: string) => string,
 		});
 	}
 
-	const totalAdded = changes.reduce((sum, change) => sum + change.diff.added, 0);
-	const totalRemoved = changes.reduce((sum, change) => sum + change.diff.removed, 0);
+	const totalAdded = changes.reduce(
+		(sum, change) => sum + change.diff.added,
+		0,
+	);
+	const totalRemoved = changes.reduce(
+		(sum, change) => sum + change.diff.removed,
+		0,
+	);
 	const totalHunks = changes.reduce((sum, change) => sum + change.hunks, 0);
-	const totalLines = changes.reduce((sum, change) => sum + change.diff.lines.length, 0);
+	const totalLines = changes.reduce(
+		(sum, change) => sum + change.diff.lines.length,
+		0,
+	);
 	return {
 		changes,
 		totalAdded,
@@ -6208,18 +7791,29 @@ function formatLineMeta(line: number, theme: Theme): string {
 	return line > 0 ? ` ${theme.fg("muted", `at line ${line}`)}` : "";
 }
 
-function formatApplyPatchLine(change: ApplyPatchChangePreview, theme: Theme): string {
+function formatApplyPatchLine(
+	change: ApplyPatchChangePreview,
+	theme: Theme,
+): string {
 	return formatLineMeta(change.line, theme);
 }
 
-function getCachedApplyPatchPreview(patchText: string, sp: (path: string) => string, ctx: any): ApplyPatchPreview | null {
+function getCachedApplyPatchPreview(
+	patchText: string,
+	sp: (path: string) => string,
+	ctx: any,
+): ApplyPatchPreview | null {
 	if (!patchText) return null;
 	const key = `apply-meta:${ctx.cwd ?? process.cwd()}:${hashText(patchText)}`;
 	if (ctx.state?._applyPatchMetaKey === key && ctx.state._applyPatchPreview) {
 		return ctx.state._applyPatchPreview as ApplyPatchPreview;
 	}
 	try {
-		const preview = parseApplyPatchPreview(patchText, sp, ctx.cwd ?? process.cwd());
+		const preview = parseApplyPatchPreview(
+			patchText,
+			sp,
+			ctx.cwd ?? process.cwd(),
+		);
 		if (ctx.state) {
 			ctx.state._applyPatchMetaKey = key;
 			ctx.state._applyPatchPreview = preview;
@@ -6231,18 +7825,37 @@ function getCachedApplyPatchPreview(patchText: string, sp: (path: string) => str
 	}
 }
 
-function getApplyPatchResultMeta(args: any, ctx: any, sp: (path: string) => string): ApplyPatchResultMeta | null {
+function getApplyPatchResultMeta(
+	args: any,
+	ctx: any,
+	sp: (path: string) => string,
+): ApplyPatchResultMeta | null {
 	const patchText = getStringArg(args ?? ctx?.args, "patchText", "patch_text");
 	if (!patchText) return null;
 	const preview = getCachedApplyPatchPreview(patchText, sp, ctx);
-	return preview && ctx.state?._applyPatchMeta ? (ctx.state._applyPatchMeta as ApplyPatchResultMeta) : null;
+	return preview && ctx.state?._applyPatchMeta
+		? (ctx.state._applyPatchMeta as ApplyPatchResultMeta)
+		: null;
 }
 
-function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: string) => string): Text {
+function renderApplyPatchCall(
+	args: any,
+	theme: Theme,
+	ctx: any,
+	sp: (path: string) => string,
+): Text {
 	syncToolCallStatus(ctx);
 	const patchText = getStringArg(args, "patchText", "patch_text");
-	const summary = stableCallSummary(ctx, "_callSummary", () => summarizeOpenAiToolCall("apply_patch", args, theme, sp));
-	const hdr = toolHeader("Apply Patch", summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme));
+	const summary = stableCallSummary(ctx, "_callSummary", () =>
+		summarizeOpenAiToolCall("apply_patch", args, theme, sp),
+	);
+	const hdr = toolHeader(
+		"Apply Patch",
+		summary,
+		theme,
+		toolStatusDot(ctx, theme),
+		liveLineCountTrailing(ctx, theme),
+	);
 
 	if (!ctx.argsComplete) return makeText(ctx.lastComponent, hdr);
 	const preview = getCachedApplyPatchPreview(patchText, sp, ctx);
@@ -6250,55 +7863,100 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 		ctx.state._openAiPatchFiles = [];
 		return makeText(ctx.lastComponent, hdr);
 	}
-	ctx.state._openAiPatchFiles = preview.changes.map((change) => change.displayPath);
+	ctx.state._openAiPatchFiles = preview.changes.map(
+		(change) => change.displayPath,
+	);
 
 	const diffWidth = branchDiffWidth();
 	const key = `apply-preview:${ctx.state._applyPatchMetaKey ?? hashText(patchText)}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 	if (ctx.state._applyPatchPreviewKey !== key) {
 		ctx.state._applyPatchPreviewKey = key;
 		ctx.state._applyPatchPreviewBody = theme.fg("muted", "(rendering…)");
-		ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+		ctx.state._applyPatchPreviewDisplay = withBranch(
+			ctx.state._applyPatchPreviewBody,
+			theme,
+			false,
+			true,
+		);
 		const dc = resolveDiffColors(theme);
 		if (preview.changes.length === 1) {
 			const [change] = preview.changes;
-			renderSplit(change.diff, change.language, ctx.expanded ? MAX_PREVIEW_LINES : (diffCollapsedLimit() ?? 32), dc, diffWidth)
+			renderSplit(
+				change.diff,
+				change.language,
+				ctx.expanded ? MAX_PREVIEW_LINES : (diffCollapsedLimit() ?? 32),
+				dc,
+				diffWidth,
+			)
 				.then((rendered) => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
 					ctx.state._applyPatchPreviewBody = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					ctx.state._applyPatchPreviewDisplay = withBranch(
+						ctx.state._applyPatchPreviewBody,
+						theme,
+						false,
+						true,
+					);
 					safeInvalidate(ctx);
 				})
 				.catch(() => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
 					ctx.state._applyPatchPreviewBody = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					ctx.state._applyPatchPreviewDisplay = withBranch(
+						ctx.state._applyPatchPreviewBody,
+						theme,
+						false,
+						true,
+					);
 					safeInvalidate(ctx);
 				});
 		} else {
-			const maxShown = ctx.expanded ? preview.changes.length : Math.min(preview.changes.length, 3);
+			const maxShown = ctx.expanded
+				? preview.changes.length
+				: Math.min(preview.changes.length, 3);
 			const previewLines = ctx.expanded
 				? Math.max(6, Math.floor(MAX_RENDER_LINES / Math.max(1, maxShown)))
 				: collapsedMultiOpLines(maxShown);
-			mapWithConcurrency(preview.changes.slice(0, maxShown), DIFF_RENDER_CONCURRENCY, async (change, index) =>
-				renderSplit(change.diff, change.language, previewLines, dc, diffWidth)
-					.then((rendered) => `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`)
-					.catch(() => `${index + 1}. ${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}`),
+			mapWithConcurrency(
+				preview.changes.slice(0, maxShown),
+				DIFF_RENDER_CONCURRENCY,
+				async (change, index) =>
+					renderSplit(change.diff, change.language, previewLines, dc, diffWidth)
+						.then(
+							(rendered) =>
+								`${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`,
+						)
+						.catch(
+							() =>
+								`${index + 1}. ${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}`,
+						),
 			)
 				.then((sections) => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
 					const remainder = preview.changes.length - maxShown;
-					const suffix = remainder > 0
-						? `\n${theme.fg("muted", `… ${remainder} more file patches${toolOutputDetailHint(theme, ctx.expanded, true)}`)}`
-						: "";
+					const suffix =
+						remainder > 0
+							? `\n${theme.fg("muted", `… ${remainder} more file patches${toolOutputDetailHint(theme, ctx.expanded, true)}`)}`
+							: "";
 					const summary = `${preview.changes.length} files ${preview.summary}`;
 					ctx.state._applyPatchPreviewBody = `${summary}\n\n${sections.join("\n\n")}${suffix}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					ctx.state._applyPatchPreviewDisplay = withBranch(
+						ctx.state._applyPatchPreviewBody,
+						theme,
+						false,
+						true,
+					);
 					safeInvalidate(ctx);
 				})
 				.catch(() => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
 					ctx.state._applyPatchPreviewBody = `${preview.changes.length} files ${preview.summary}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					ctx.state._applyPatchPreviewDisplay = withBranch(
+						ctx.state._applyPatchPreviewBody,
+						theme,
+						false,
+						true,
+					);
 					safeInvalidate(ctx);
 				});
 		}
@@ -6308,9 +7966,23 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 	return makeText(ctx.lastComponent, body ? `${hdr}\n${body}` : hdr);
 }
 
-function renderApplyPatchResult(result: any, isPartial: boolean, theme: Theme, ctx: any): Text {
+function renderApplyPatchResult(
+	result: any,
+	isPartial: boolean,
+	theme: Theme,
+	ctx: any,
+): Text {
 	if (isPartial) {
-		return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", "Applying Patch..."), !!ctx?.expanded, theme, ctx));
+		return makeText(
+			ctx.lastComponent,
+			runningPreviewBlock(
+				result,
+				theme.fg("dim", "Applying Patch..."),
+				!!ctx?.expanded,
+				theme,
+				ctx,
+			),
+		);
 	}
 	clearBlinkTimer(ctx);
 	setToolStatus(ctx, ctx.isError ? "error" : "success");
@@ -6318,22 +7990,56 @@ function renderApplyPatchResult(result: any, isPartial: boolean, theme: Theme, c
 	if (ctx.isError) {
 		const raw = getTextContent(result).trim();
 		const firstLine = raw ? raw.split("\n")[0] : "Apply patch failed";
-		return makeText(ctx.lastComponent, withBranch(theme.fg("error", firstLine), theme));
+		return makeText(
+			ctx.lastComponent,
+			withBranch(theme.fg("error", firstLine), theme),
+		);
 	}
 
-	const meta = getApplyPatchResultMeta(ctx.args, ctx, (path: string) => shortPath(ctx.cwd ?? process.cwd(), path));
+	const meta = getApplyPatchResultMeta(ctx.args, ctx, (path: string) =>
+		shortPath(ctx.cwd ?? process.cwd(), path),
+	);
 	if (!meta || meta.changeCount === 0) {
-		return makeText(ctx.lastComponent, withBranch(theme.fg("success", "Applied"), theme));
+		return makeText(
+			ctx.lastComponent,
+			withBranch(theme.fg("success", "Applied"), theme),
+		);
 	}
 
 	if (meta.changeCount === 1 && meta.firstChange) {
 		const change = meta.firstChange;
-		const summary = diffSummaryWithMeta(change.added, change.removed, change.hunks, change.kind === "add" ? "new file" : change.kind === "delete" ? "delete" : "");
-		return makeText(ctx.lastComponent, withBranch(`${theme.fg("success", "Applied")} ${theme.fg("muted", change.displayPath)} ${summary}${formatLineMeta(change.line, theme)}`, theme));
+		const summary = diffSummaryWithMeta(
+			change.added,
+			change.removed,
+			change.hunks,
+			change.kind === "add"
+				? "new file"
+				: change.kind === "delete"
+					? "delete"
+					: "",
+		);
+		return makeText(
+			ctx.lastComponent,
+			withBranch(
+				`${theme.fg("success", "Applied")} ${theme.fg("muted", change.displayPath)} ${summary}${formatLineMeta(change.line, theme)}`,
+				theme,
+			),
+		);
 	}
 
-	const summary = diffSummaryWithMeta(meta.totalAdded, meta.totalRemoved, meta.totalHunks, "");
-	return makeText(ctx.lastComponent, withBranch(`${theme.fg("success", "Applied")} ${meta.changeCount} files ${summary}${meta.totalLines ? ` ${theme.fg("muted", `(${meta.totalLines} diff lines)`)}` : ""}`, theme));
+	const summary = diffSummaryWithMeta(
+		meta.totalAdded,
+		meta.totalRemoved,
+		meta.totalHunks,
+		"",
+	);
+	return makeText(
+		ctx.lastComponent,
+		withBranch(
+			`${theme.fg("success", "Applied")} ${meta.changeCount} files ${summary}${meta.totalLines ? ` ${theme.fg("muted", `(${meta.totalLines} diff lines)`)}` : ""}`,
+			theme,
+		),
+	);
 }
 
 function summarizeMcpToolCall(args: any, theme: Theme): string {
@@ -6346,32 +8052,79 @@ function summarizeMcpToolCall(args: any, theme: Theme): string {
 	return theme.fg("muted", "status");
 }
 
-function summarizeGenericToolCall(name: string, args: any, theme: Theme, sp: (path: string) => string): string {
+function summarizeGenericToolCall(
+	name: string,
+	args: any,
+	theme: Theme,
+	sp: (path: string) => string,
+): string {
 	if (isMcpToolName(name)) return summarizeMcpToolCall(args, theme);
 	return summarizeOpenAiToolCall(name, args, theme, sp);
 }
 
-function renderMcpToolResult(result: any, expanded: boolean, isPartial: boolean, theme: Theme, ctx: any): Text {
+function renderMcpToolResult(
+	result: any,
+	expanded: boolean,
+	isPartial: boolean,
+	theme: Theme,
+	ctx: any,
+): Text {
 	if (isPartial) {
-		return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", "MCP running..."), expanded, theme, ctx, {
-			styleLine: (line) => theme.fg("toolOutput", line || " "),
-		}));
+		return makeText(
+			ctx.lastComponent,
+			runningPreviewBlock(
+				result,
+				theme.fg("dim", "MCP running..."),
+				expanded,
+				theme,
+				ctx,
+				{
+					styleLine: (line) => theme.fg("toolOutput", line || " "),
+				},
+			),
+		);
 	}
 	clearBlinkTimer(ctx);
 	setToolStatus(ctx, ctx.isError ? "error" : "success");
 
-	const mode = getMode(readSettings().mcpOutputMode, ["hidden", "summary", "preview"] as const, "preview");
+	const mode = getMode(
+		readSettings().mcpOutputMode,
+		["hidden", "summary", "preview"] as const,
+		"preview",
+	);
 	if (mode === "hidden") return makeText(ctx.lastComponent, "");
 
 	const raw = getTextContent(result).trim();
 	const lines = raw ? raw.split("\n") : [];
 	if (lines.length === 0) {
-		return makeText(ctx.lastComponent, withBranch(theme.fg(ctx.isError ? "error" : "success", ctx.isError ? "Failed" : "Done"), theme));
+		return makeText(
+			ctx.lastComponent,
+			withBranch(
+				theme.fg(
+					ctx.isError ? "error" : "success",
+					ctx.isError ? "Failed" : "Done",
+				),
+				theme,
+			),
+		);
 	}
 
-	const statusText = ctx.isError ? theme.fg("error", lines[0]) : theme.fg("muted", `${lines.length} line${lines.length === 1 ? "" : "s"} returned`);
-	if (mode === "summary") return makeText(ctx.lastComponent, withBranch(statusText, theme));
-	if (!expanded) return makeText(ctx.lastComponent, withBranch(`${statusText}${toolOutputDetailHint(theme, expanded)}`, theme));
+	const statusText = ctx.isError
+		? theme.fg("error", lines[0])
+		: theme.fg(
+				"muted",
+				`${lines.length} line${lines.length === 1 ? "" : "s"} returned`,
+			);
+	if (mode === "summary")
+		return makeText(ctx.lastComponent, withBranch(statusText, theme));
+	if (!expanded)
+		return makeText(
+			ctx.lastComponent,
+			withBranch(
+				`${statusText}${toolOutputDetailHint(theme, expanded)}`,
+				theme,
+			),
+		);
 	const preview = buildPreviewText(
 		lines,
 		true,
@@ -6380,10 +8133,18 @@ function renderMcpToolResult(result: any, expanded: boolean, isPartial: boolean,
 		lines.length,
 		(line) => theme.fg(ctx.isError ? "error" : "toolOutput", line || " "),
 	);
-	return makeText(ctx.lastComponent, withBranch(`${statusText}\n${preview}`, theme));
+	return makeText(
+		ctx.lastComponent,
+		withBranch(`${statusText}\n${preview}`, theme),
+	);
 }
 
-function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (path: string) => string): string {
+function summarizeOpenAiToolCall(
+	name: string,
+	args: any,
+	theme: Theme,
+	sp: (path: string) => string,
+): string {
 	switch (name) {
 		case "apply_patch": {
 			const patchText = getStringArg(args, "patchText", "patch_text");
@@ -6403,7 +8164,10 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			return `${urls[0]} ${theme.fg("muted", `(+${urls.length - 1} urls)`)}`;
 		}
 		case "get_search_content":
-			return getStringArg(args, "responseId", "response_id") || theme.fg("muted", "load cached content");
+			return (
+				getStringArg(args, "responseId", "response_id") ||
+				theme.fg("muted", "load cached content")
+			);
 		case "web_search": {
 			const query = getStringArg(args, "query");
 			if (query) return summarizeText(query, 72);
@@ -6418,7 +8182,9 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			return summarizeText(getStringArg(args, "question") || "ask user", 72);
 		case "ask_user_question":
 		case "questionnaire": {
-			const questions = Array.isArray(args?.questions) ? args.questions.length : 0;
+			const questions = Array.isArray(args?.questions)
+				? args.questions.length
+				: 0;
 			return questions > 0
 				? `${questions} question${questions === 1 ? "" : "s"}`
 				: theme.fg("muted", "questionnaire");
@@ -6434,7 +8200,9 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 		case "context_log":
 			return theme.fg("muted", "history");
 		case "context_checkout":
-			return getStringArg(args, "target") || theme.fg("muted", "checkout context");
+			return (
+				getStringArg(args, "target") || theme.fg("muted", "checkout context")
+			);
 		case "annotate":
 			return getStringArg(args, "url") || theme.fg("muted", "current tab");
 		case "alpha_search":
@@ -6444,7 +8212,10 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 		case "alpha_annotate_paper":
 			return getStringArg(args, "paper") || theme.fg("muted", "paper");
 		case "alpha_read_code":
-			return getStringArg(args, "githubUrl", "github_url") || theme.fg("muted", "repository");
+			return (
+				getStringArg(args, "githubUrl", "github_url") ||
+				theme.fg("muted", "repository")
+			);
 		case "Skill": {
 			// Marker consumed by generic renderer → skillHeader(name).
 			const name = getStringArg(args, "name");
@@ -6455,9 +8226,14 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 		case "ExitPlanMode":
 			return theme.fg("muted", "present plan");
 		case "Agent":
-			return summarizeText(getStringArg(args, "description", "prompt") || "launch agent", 72);
+			return summarizeText(
+				getStringArg(args, "description", "prompt") || "launch agent",
+				72,
+			);
 		case "get_subagent_result":
-			return getStringArg(args, "agent_id") || theme.fg("muted", "agent result");
+			return (
+				getStringArg(args, "agent_id") || theme.fg("muted", "agent result")
+			);
 		case "steer_subagent":
 			return getStringArg(args, "agent_id") || theme.fg("muted", "steer agent");
 		case "TaskCreate":
@@ -6466,14 +8242,21 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			return theme.fg("muted", "task list");
 		case "TaskGet":
 		case "TaskUpdate":
-			return getStringArg(args, "taskId", "task_id") || theme.fg("muted", "task");
+			return (
+				getStringArg(args, "taskId", "task_id") || theme.fg("muted", "task")
+			);
 		case "TaskOutput":
 		case "TaskStop":
-			return getStringArg(args, "task_id", "taskId") || theme.fg("muted", "background task");
+			return (
+				getStringArg(args, "task_id", "taskId") ||
+				theme.fg("muted", "background task")
+			);
 		case "TaskExecute": {
 			const taskIds = getStringArrayArg(args, "task_ids", "taskIds");
 			if (taskIds.length === 0) return theme.fg("muted", "start tasks");
-			return taskIds.length === 1 ? taskIds[0] : `${taskIds[0]} ${theme.fg("muted", `(+${taskIds.length - 1} tasks)`)}`;
+			return taskIds.length === 1
+				? taskIds[0]
+				: `${taskIds[0]} ${theme.fg("muted", `(+${taskIds.length - 1} tasks)`)}`;
 		}
 		default: {
 			// Prefer a real arg summary. Never fall back to humanizeToolName(name) —
@@ -6504,29 +8287,11 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 	}
 }
 
-interface ParsedTaskListLine {
-	id: string;
-	status: string;
-	subject: string;
-}
-
-function parseTaskListLine(line: string): ParsedTaskListLine | null {
-	const match = line.match(/^#(\d+) \[([^\]]+)\] (.+)$/);
-	if (!match) return null;
-	return {
-		id: match[1],
-		status: match[2],
-		subject: match[3],
-	};
-}
-
-function formatTaskStatus(status: string, theme: Theme): string {
-	if (status === "completed") return theme.fg("success", status);
-	if (status === "in_progress") return theme.fg("warning", status);
-	return theme.fg("muted", status);
-}
-
-function formatOpenAiSuccessLine(name: string, line: string, theme: Theme): string {
+function formatOpenAiSuccessLine(
+	name: string,
+	line: string,
+	theme: Theme,
+): string {
 	const trimmed = line.trim();
 	if (!trimmed) return theme.fg("success", "Done");
 
@@ -6566,39 +8331,16 @@ function formatOpenAiSuccessLine(name: string, line: string, theme: Theme): stri
 	return theme.fg("muted", trimmed);
 }
 
-function renderTaskListResult(lines: string[], expanded: boolean, theme: Theme, ctx: any): Text {
-	const tasks = lines.map(parseTaskListLine).filter((task): task is ParsedTaskListLine => task !== null);
-	if (tasks.length === 0) {
-		const text = lines.length === 0
-			? theme.fg("muted", "no tasks")
-			: buildPreviewText(lines, expanded, theme, previewLimit(), lines.length, (line) => theme.fg("dim", line));
-		return makeText(ctx.lastComponent, withBranch(text, theme));
-	}
-
-	const pending = tasks.filter((task) => task.status === "pending").length;
-	const inProgress = tasks.filter((task) => task.status === "in_progress").length;
-	const completed = tasks.filter((task) => task.status === "completed").length;
-	let summary = theme.fg("muted", `${tasks.length} tasks`);
-	const parts: string[] = [];
-	if (inProgress > 0) parts.push(`${theme.fg("warning", String(inProgress))} in progress`);
-	if (pending > 0) parts.push(`${theme.fg("muted", String(pending))} pending`);
-	if (completed > 0) parts.push(`${theme.fg("success", String(completed))} completed`);
-	if (parts.length > 0) summary += ` ${theme.fg("muted", "•")} ${parts.join(` ${theme.fg("muted", "•")} `)}`;
-
-	if (!expanded) {
-		return makeText(ctx.lastComponent, withBranch(`${summary}${toolOutputDetailHint(theme, expanded)}`, theme));
-	}
-
-	const shown = tasks.slice(0, previewLimit());
-	const preview = shown.map((task) => `${theme.fg("accent", `#${task.id}`)} ${formatTaskStatus(task.status, theme)} ${theme.fg("dim", task.subject)}`);
-	const remaining = tasks.length - shown.length;
-	if (remaining > 0) preview.push(theme.fg("muted", `… ${remaining} more tasks`));
-	return makeText(ctx.lastComponent, withBranch(`${summary}\n${preview.join("\n")}`, theme));
-}
-
-function getFirstImageBlock(result: any): { data: string; mimeType: string } | undefined {
+function getFirstImageBlock(
+	result: any,
+): { data: string; mimeType: string } | undefined {
 	if (!Array.isArray(result?.content)) return undefined;
-	return result.content.find((block: any) => block?.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string");
+	return result.content.find(
+		(block: any) =>
+			block?.type === "image" &&
+			typeof block.data === "string" &&
+			typeof block.mimeType === "string",
+	);
 }
 
 function getReadImageFallback(result: any, ctx: any): string {
@@ -6615,12 +8357,20 @@ function getReadImageFallback(result: any, ctx: any): string {
 	return imageFallback(image.mimeType, dimensions, filename);
 }
 
-function renderReadImageResult(result: any, expanded: boolean, theme: Theme, ctx: any): Text {
+function renderReadImageResult(
+	result: any,
+	expanded: boolean,
+	theme: Theme,
+	ctx: any,
+): Text {
 	const image = getFirstImageBlock(result);
 	const mimeType = image?.mimeType ?? "image";
 	const summary = `${theme.fg("success", "Image loaded")} ${theme.fg("muted", `[${mimeType}]`)}`;
 	if (!expanded) {
-		return makeText(ctx.lastComponent, withBranch(`${summary}${toolOutputDetailHint(theme, expanded)}`, theme));
+		return makeText(
+			ctx.lastComponent,
+			withBranch(`${summary}${toolOutputDetailHint(theme, expanded)}`, theme),
+		);
 	}
 
 	const noteLines = getTextContent(result)
@@ -6635,51 +8385,104 @@ function renderReadImageResult(result: any, expanded: boolean, theme: Theme, ctx
 	return makeText(ctx.lastComponent, withBranch(lines.join("\n"), theme));
 }
 
-function renderOpenAiToolResult(name: string, result: any, expanded: boolean, isPartial: boolean, theme: Theme, ctx: any): Text {
+function renderOpenAiToolResult(
+	name: string,
+	result: any,
+	expanded: boolean,
+	isPartial: boolean,
+	theme: Theme,
+	ctx: any,
+): Text {
+	if (BUNDLED_TASK_TOOL_NAMES.has(name)) {
+		if (!isPartial) {
+			clearBlinkTimer(ctx);
+			setToolStatus(ctx, ctx.isError ? "error" : "success");
+		}
+		return makeText(ctx.lastComponent, "");
+	}
 	if (isPartial) {
-		return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", `${humanizeToolName(name)}...`), expanded, theme, ctx));
+		return makeText(
+			ctx.lastComponent,
+			runningPreviewBlock(
+				result,
+				theme.fg("dim", `${humanizeToolName(name)}...`),
+				expanded,
+				theme,
+				ctx,
+			),
+		);
 	}
 	clearBlinkTimer(ctx);
 	setToolStatus(ctx, ctx.isError ? "error" : "success");
 
 	const raw = getTextContent(result).trim();
 	const lines = raw ? raw.split("\n") : [];
-	const patchFiles = Array.isArray(ctx.state?._openAiPatchFiles) ? ctx.state._openAiPatchFiles : [];
+	const patchFiles = Array.isArray(ctx.state?._openAiPatchFiles)
+		? ctx.state._openAiPatchFiles
+		: [];
 
 	if (lines.length === 0) {
 		if (patchFiles.length > 0) {
-			const suffix = patchFiles.length === 1 ? patchFiles[0] : `${patchFiles.length} files`;
-			return makeText(ctx.lastComponent, withBranch(`${theme.fg(ctx.isError ? "error" : "success", ctx.isError ? "Failed" : "Applied")} ${theme.fg("muted", suffix)}`, theme));
+			const suffix =
+				patchFiles.length === 1 ? patchFiles[0] : `${patchFiles.length} files`;
+			return makeText(
+				ctx.lastComponent,
+				withBranch(
+					`${theme.fg(ctx.isError ? "error" : "success", ctx.isError ? "Failed" : "Applied")} ${theme.fg("muted", suffix)}`,
+					theme,
+				),
+			);
 		}
-		return makeText(ctx.lastComponent, withBranch(theme.fg(ctx.isError ? "error" : "success", ctx.isError ? "Failed" : "Done"), theme));
-	}
-
-	if (!ctx.isError && name === "TaskList") {
-		return renderTaskListResult(lines, expanded, theme, ctx);
+		return makeText(
+			ctx.lastComponent,
+			withBranch(
+				theme.fg(
+					ctx.isError ? "error" : "success",
+					ctx.isError ? "Failed" : "Done",
+				),
+				theme,
+			),
+		);
 	}
 
 	const statusText = ctx.isError
 		? theme.fg("error", lines[0])
-		: theme.fg("muted", `${lines.length} line${lines.length === 1 ? "" : "s"} returned`);
+		: theme.fg(
+				"muted",
+				`${lines.length} line${lines.length === 1 ? "" : "s"} returned`,
+			);
 	if (!expanded) {
-		return makeText(ctx.lastComponent, withBranch(`${statusText}${toolOutputDetailHint(theme, expanded)}`, theme));
+		return makeText(
+			ctx.lastComponent,
+			withBranch(
+				`${statusText}${toolOutputDetailHint(theme, expanded)}`,
+				theme,
+			),
+		);
 	}
 
 	if (!ctx.isError && lines.length === 1) {
-		return makeText(ctx.lastComponent, withBranch(formatOpenAiSuccessLine(name, lines[0], theme), theme));
+		return makeText(
+			ctx.lastComponent,
+			withBranch(formatOpenAiSuccessLine(name, lines[0], theme), theme),
+		);
 	}
 
-	const preview = lines.length === 1
-		? theme.fg(ctx.isError ? "error" : "dim", lines[0])
-		: buildPreviewText(
-			lines,
-			true,
-			theme,
-			previewLimit(),
-			lines.length,
-			(line) => theme.fg(ctx.isError ? "error" : "dim", line || " "),
-		);
-	return makeText(ctx.lastComponent, withBranch(`${statusText}\n${preview}`, theme));
+	const preview =
+		lines.length === 1
+			? theme.fg(ctx.isError ? "error" : "dim", lines[0])
+			: buildPreviewText(
+					lines,
+					true,
+					theme,
+					previewLimit(),
+					lines.length,
+					(line) => theme.fg(ctx.isError ? "error" : "dim", line || " "),
+				);
+	return makeText(
+		ctx.lastComponent,
+		withBranch(`${statusText}\n${preview}`, theme),
+	);
 }
 
 // ===========================================================================
@@ -6718,7 +8521,10 @@ export default async function (pi: ExtensionAPI) {
 			setExtraToolDetailMode(!extraToolOutputExpanded);
 			if (ctx.hasUI) {
 				ctx.ui.setToolsExpanded(ctx.ui.getToolsExpanded());
-				ctx.ui.notify(`Extra tool detail: ${extraToolOutputExpanded ? "on" : "off"}`, "info");
+				ctx.ui.notify(
+					`Extra tool detail: ${extraToolOutputExpanded ? "on" : "off"}`,
+					"info",
+				);
 			}
 		},
 	});
@@ -6738,16 +8544,29 @@ export default async function (pi: ExtensionAPI) {
 	};
 	const getCcToolsUiSnapshot = (): CcToolsUiSnapshot => {
 		const settings = readSettings();
-		const styleRaw = settings.toolBackground === "border" ? "outlines" : settings.toolBackground;
-		const toolBackground = (styleRaw === "transparent" || styleRaw === "default" || styleRaw === "outlines"
-			? styleRaw
-			: toolBackgroundMode) as ToolStyle;
-		const readOutputMode = (["hidden", "summary", "preview"].includes(String(settings.readOutputMode))
-			? settings.readOutputMode
-			: "preview") as OutputMode;
-		const bashOutputMode = (["opencode", "summary", "preview"].includes(String(settings.bashOutputMode))
-			? settings.bashOutputMode
-			: "opencode") as CcToolsUiSnapshot["bashOutputMode"];
+		const styleRaw =
+			settings.toolBackground === "border"
+				? "outlines"
+				: settings.toolBackground;
+		const toolBackground = (
+			styleRaw === "transparent" ||
+			styleRaw === "default" ||
+			styleRaw === "outlines"
+				? styleRaw
+				: toolBackgroundMode
+		) as ToolStyle;
+		const readOutputMode = (
+			["hidden", "summary", "preview"].includes(String(settings.readOutputMode))
+				? settings.readOutputMode
+				: "preview"
+		) as OutputMode;
+		const bashOutputMode = (
+			["opencode", "summary", "preview"].includes(
+				String(settings.bashOutputMode),
+			)
+				? settings.bashOutputMode
+				: "opencode"
+		) as CcToolsUiSnapshot["bashOutputMode"];
 		return {
 			toolBackground,
 			groupToolCalls: toolGroupingEnabled(),
@@ -6755,7 +8574,7 @@ export default async function (pi: ExtensionAPI) {
 			showCompactToolStatusDots: showCompactToolStatusDotsEnabled(),
 			extraToolOutputExpanded,
 			themeAdaptive: themeAdaptiveEnabled(),
-			liveToolPreview: settings.liveToolPreview !== false,
+			liveToolPreview: liveToolPreviewEnabled(),
 			imagePasterEnabled: imagePasterEnabled(),
 			escSteerEnabled: escSteerEnabled(),
 			doubleEscClearEnabled: doubleEscClearEnabled(),
@@ -6773,10 +8592,14 @@ export default async function (pi: ExtensionAPI) {
 			claudeHeaderEnabled: settings.claudeHeaderEnabled !== false,
 			quietStartup: quietStartupFile.read(),
 			statuslineEnabled: settings.statuslineEnabled !== false,
-			statuslineCtxStyle: settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
+			statuslineCtxStyle:
+				settings.statuslineCtxStyle === "plain" ? "plain" : "claude",
 			statuslineShowWorktree: settings.statuslineShowWorktree !== false,
 			companionsInstalled: Object.fromEntries(
-				COMPANION_PACKAGES.map((c) => [c.source, piPackagesFile.isInstalled(c.source)]),
+				COMPANION_PACKAGES.map((c) => [
+					c.source,
+					piPackagesFile.isInstalled(c.source),
+				]),
 			),
 		};
 	};
@@ -6788,7 +8611,8 @@ export default async function (pi: ExtensionAPI) {
 				const source = id.slice("companion:".length);
 				try {
 					piPackagesFile.install(source);
-					if (ctx.hasUI) ctx.ui.notify(`Added ${source} — /reload to activate`, "info");
+					if (ctx.hasUI)
+						ctx.ui.notify(`Added ${source} — /reload to activate`, "info");
 				} catch (err) {
 					if (ctx.hasUI)
 						ctx.ui.notify(
@@ -6801,7 +8625,12 @@ export default async function (pi: ExtensionAPI) {
 		}
 		switch (id) {
 			case "toolBackground": {
-				if (value !== "outlines" && value !== "transparent" && value !== "default") return;
+				if (
+					value !== "outlines" &&
+					value !== "transparent" &&
+					value !== "default"
+				)
+					return;
 				toolBackgroundOverride = value;
 				toolBackgroundMode = value;
 				writeSettingsKey("toolBackground", value);
@@ -6845,7 +8674,8 @@ export default async function (pi: ExtensionAPI) {
 			}
 			case "imagePasterEnabled": {
 				writeSettingsKey("imagePasterEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply image paster changes", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify("Reload Pi to apply image paster changes", "info");
 				break;
 			}
 			case "escSteerEnabled": {
@@ -6904,18 +8734,24 @@ export default async function (pi: ExtensionAPI) {
 			}
 			case "claudeHeaderEnabled": {
 				writeSettingsKey("claudeHeaderEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply header change", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify("Reload Pi to apply header change", "info");
 				break;
 			}
 			case "quietStartup": {
 				// Writes Pi core's own ~/.pi/agent/settings.json, NOT cc-my-pi's file.
 				quietStartupFile.write(value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Quiet startup takes effect next session (/reload)", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						"Quiet startup takes effect next session (/reload)",
+						"info",
+					);
 				break;
 			}
 			case "statuslineEnabled": {
 				writeSettingsKey("statuslineEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply statusline change", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify("Reload Pi to apply statusline change", "info");
 				break;
 			}
 			case "statuslineCtxStyle": {
@@ -6931,17 +8767,20 @@ export default async function (pi: ExtensionAPI) {
 			}
 			case "spinnerEnabled": {
 				writeSettingsKey("spinnerEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply spinner module change", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify("Reload Pi to apply spinner module change", "info");
 				break;
 			}
 			case "sessionCommandsEnabled": {
 				writeSettingsKey("sessionCommandsEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /exit + /clear change", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify("Reload Pi to apply /exit + /clear change", "info");
 				break;
 			}
 			case "copyCommandEnabled": {
 				writeSettingsKey("copyCommandEnabled", value === "on");
-				if (ctx.hasUI) ctx.ui.notify("Reload Pi to apply /copy-code change", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify("Reload Pi to apply /copy-code change", "info");
 				break;
 			}
 			case "copyAlwaysFull": {
@@ -6969,8 +8808,23 @@ export default async function (pi: ExtensionAPI) {
 
 	const TOOL_MODES = ["outlines", "transparent", "default"] as const;
 	const TOOL_BOOL_MODES = ["on", "off", "toggle", "status"] as const;
-	const TOOL_SUBCOMMANDS = [...TOOL_MODES, "group", "detail", "branch", "diff", "theme", "spinner", "setup", "ui", "settings", "status"] as const;
-	const booleanMode = (raw: string | undefined, current: boolean): boolean | "status" | undefined => {
+	const TOOL_SUBCOMMANDS = [
+		...TOOL_MODES,
+		"group",
+		"detail",
+		"branch",
+		"diff",
+		"theme",
+		"spinner",
+		"setup",
+		"ui",
+		"settings",
+		"status",
+	] as const;
+	const booleanMode = (
+		raw: string | undefined,
+		current: boolean,
+	): boolean | "status" | undefined => {
 		const mode = raw || "toggle";
 		if (mode === "on") return true;
 		if (mode === "off") return false;
@@ -6983,86 +8837,123 @@ export default async function (pi: ExtensionAPI) {
 		const branchMode = toolBranchColorModeFixed() ? "fixed" : "theme";
 		const branchGray = getConfiguredToolBranchGray();
 		const theme = ctx.ui?.theme;
-		const chromeHint = branchMode === "theme" && theme
-			? (resolveThemeChromeFg(theme) ? " (attenuated on light themes)" : " (fallback gray if theme keys missing)")
-			: "";
-		const branchLine = branchMode === "fixed"
-			? `Branch color: fixed rgb(${branchGray})`
-			: `Branch color: theme${chromeHint}`;
-		ctx.ui.notify([
-			`Tool style: ${toolBackgroundMode}`,
-			`Tool grouping: ${toolGroupingEnabled() ? "on" : "off"}`,
-			`Extra detail: ${extraToolOutputExpanded ? "on" : "off"} (${rawKeyHint("ctrl+shift+o", "toggle")})`,
-			branchLine,
-			`  /cc-my-pi branch <0-255> | theme | fixed | reset`,
-			`Diff preview: ${diffCollapsedLimit() ?? "stock (24 write / 32 edit)"} collapsed lines`,
-			`  /cc-my-pi diff <1-150> | stock | status`,
-		].join("\n"), "info");
+		const chromeHint =
+			branchMode === "theme" && theme
+				? resolveThemeChromeFg(theme)
+					? " (attenuated on light themes)"
+					: " (fallback gray if theme keys missing)"
+				: "";
+		const branchLine =
+			branchMode === "fixed"
+				? `Branch color: fixed rgb(${branchGray})`
+				: `Branch color: theme${chromeHint}`;
+		ctx.ui.notify(
+			[
+				`Tool style: ${toolBackgroundMode}`,
+				`Tool grouping: ${toolGroupingEnabled() ? "on" : "off"}`,
+				`Extra detail: ${extraToolOutputExpanded ? "on" : "off"} (${rawKeyHint("ctrl+shift+o", "toggle")})`,
+				branchLine,
+				`  /cc-my-pi branch <0-255> | theme | fixed | reset`,
+				`Diff preview: ${diffCollapsedLimit() ?? "stock (24 write / 32 edit)"} collapsed lines`,
+				`  /cc-my-pi diff <1-150> | stock | status`,
+			].join("\n"),
+			"info",
+		);
 	};
 	pi.registerCommand("cc-my-pi", {
-		description: "Open cc-my-pi settings UI (or setup/style/group/branch/diff/theme/spinner subcommands)",
+		description:
+			"Open cc-my-pi settings UI (or setup/style/group/branch/diff/theme/spinner subcommands)",
 		getArgumentCompletions(prefix) {
 			const parts = prefix.trimStart().split(/\s+/);
 			const first = parts[0] ?? "";
 			if (parts.length <= 1) {
-				return TOOL_SUBCOMMANDS
-					.filter((m) => m.startsWith(first))
-					.map((m) => ({
-						value: m,
-						label: m,
-						description:
-							m === "group" ? "Toggle grouped adjacent/concurrent tool rows"
-							: m === "detail" ? "Toggle Ctrl+Shift+O extra-detail mode"
-							: m === "branch" ? "├ └ │ gray (0-255), theme, fixed, or reset"
-							: m === "diff" ? "Collapsed diff preview cap (lines)"
-							: m === "theme" ? "Theme-adaptive colors: on, off, toggle, status"
-							: m === "spinner" ? "Spinner verb/status colors: verb <key>, status <key>, preview, reset"
-							: m === "setup" ? "Guided walkthrough of every setting (re-runnable)"
-							: m === "ui" || m === "settings" ? "Open interactive settings panel with live preview"
-							: m === "status" ? "Show tool UI settings as text"
-							: m === "outlines" ? "Horizontal rules around each tool (default)"
-							: m === "transparent" ? "No borders or backgrounds"
-							: "Pi built-in tool backgrounds",
-					}));
+				return TOOL_SUBCOMMANDS.filter((m) => m.startsWith(first)).map((m) => ({
+					value: m,
+					label: m,
+					description:
+						m === "group"
+							? "Toggle grouped adjacent/concurrent tool rows"
+							: m === "detail"
+								? "Toggle Ctrl+Shift+O extra-detail mode"
+								: m === "branch"
+									? "├ └ │ gray (0-255), theme, fixed, or reset"
+									: m === "diff"
+										? "Collapsed diff preview cap (lines)"
+										: m === "theme"
+											? "Theme-adaptive colors: on, off, toggle, status"
+											: m === "spinner"
+												? "Spinner verb/status colors: verb <key>, status <key>, preview, reset"
+												: m === "setup"
+													? "Guided walkthrough of every setting (re-runnable)"
+													: m === "ui" || m === "settings"
+														? "Open interactive settings panel with live preview"
+														: m === "status"
+															? "Show tool UI settings as text"
+															: m === "outlines"
+																? "Horizontal rules around each tool (default)"
+																: m === "transparent"
+																	? "No borders or backgrounds"
+																	: "Pi built-in tool backgrounds",
+				}));
 			}
 			if (first === "branch") {
 				const second = parts[1] ?? "";
 				const opts = ["theme", "fixed", "reset", "status"];
 				return opts
 					.filter((o) => o.startsWith(second))
-					.map((o) => ({ value: `branch ${o}`, label: o, description: "Branch connector color" }));
+					.map((o) => ({
+						value: `branch ${o}`,
+						label: o,
+						description: "Branch connector color",
+					}));
 			}
 			if (first === "diff") {
 				const second = parts[1] ?? "";
 				const opts = ["stock", "10", "24", "32", "status"];
 				return opts
 					.filter((o) => o.startsWith(second))
-					.map((o) => ({ value: `diff ${o}`, label: o, description: "Collapsed diff preview cap (lines)" }));
+					.map((o) => ({
+						value: `diff ${o}`,
+						label: o,
+						description: "Collapsed diff preview cap (lines)",
+					}));
 			}
 			if (first === "theme") {
 				const second = parts[1] ?? "";
-				return THEME_MODES
-					.filter((o) => o.startsWith(second))
-					.map((o) => ({ value: `theme ${o}`, label: o, description: "Theme-adaptive coloring" }));
+				return THEME_MODES.filter((o) => o.startsWith(second)).map((o) => ({
+					value: `theme ${o}`,
+					label: o,
+					description: "Theme-adaptive coloring",
+				}));
 			}
 			if (first === "spinner") {
 				const second = parts[1] ?? "";
 				if ((second === "verb" || second === "status") && parts.length >= 3) {
 					const keyPrefix = (parts[2] ?? "").toLowerCase();
-					return COMMON_COLOR_KEYS
-						.filter((k) => k.toLowerCase().startsWith(keyPrefix))
-						.map((k) => ({ value: `spinner ${second} ${k}`, label: k, description: `theme.fg("${k}", …)` }));
+					return COMMON_COLOR_KEYS.filter((k) =>
+						k.toLowerCase().startsWith(keyPrefix),
+					).map((k) => ({
+						value: `spinner ${second} ${k}`,
+						label: k,
+						description: `theme.fg("${k}", …)`,
+					}));
 				}
 				const opts = ["verb", "status", "reset", "preview"];
 				return opts
 					.filter((o) => o.startsWith(second))
-					.map((o) => ({ value: `spinner ${o}`, label: o, description: "Spinner color subcommand" }));
+					.map((o) => ({
+						value: `spinner ${o}`,
+						label: o,
+						description: "Spinner color subcommand",
+					}));
 			}
 			if (first === "group" || first === "detail" || first === "extra") {
 				const second = parts[1] ?? "";
-				return TOOL_BOOL_MODES
-					.filter((m) => m.startsWith(second))
-					.map((m) => ({ value: `${first} ${m}`, label: m, description: `${m} ${first}` }));
+				return TOOL_BOOL_MODES.filter((m) => m.startsWith(second)).map((m) => ({
+					value: `${first} ${m}`,
+					label: m,
+					description: `${m} ${first}`,
+				}));
 			}
 			return [];
 		},
@@ -7083,7 +8974,12 @@ export default async function (pi: ExtensionAPI) {
 			// Folded former standalone commands: /cc-my-pi theme …, /cc-my-pi spinner ….
 			// Pass the original-case remainder — spinner color keys are case-sensitive.
 			if (sub === "theme" || sub === "spinner") {
-				const rawRest = args.trim().split(/\s+/).filter(Boolean).slice(1).join(" ");
+				const rawRest = args
+					.trim()
+					.split(/\s+/)
+					.filter(Boolean)
+					.slice(1)
+					.join(" ");
 				if (sub === "theme") await themeCommand.handler(rawRest, ctx);
 				else await spinnerCommand.handler(rawRest, ctx);
 				return;
@@ -7091,7 +8987,10 @@ export default async function (pi: ExtensionAPI) {
 
 			if (sub === "setup") {
 				const { openCcToolsSetupWizard } = await loadSettingsUi();
-				const outcome = await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
+				const outcome = await openCcToolsSetupWizard(
+					ctx,
+					ccToolsSettingsController,
+				);
 				// "skip for now" leaves the marker unset so the next session re-opens.
 				if (outcome !== "skip-once") writeSettingsKey("ccMyPiSetupDone", true);
 				return;
@@ -7100,18 +8999,29 @@ export default async function (pi: ExtensionAPI) {
 			if (sub === "group") {
 				const next = booleanMode(parts[1], toolGroupingEnabled());
 				if (next === undefined) {
-					if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-my-pi group ${TOOL_BOOL_MODES.join("|")}`, "error");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Usage: /cc-my-pi group ${TOOL_BOOL_MODES.join("|")}`,
+							"error",
+						);
 					return;
 				}
 				if (next === "status") {
-					if (ctx.hasUI) ctx.ui.notify(`Tool grouping: ${toolGroupingEnabled() ? "on" : "off"}`, "info");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Tool grouping: ${toolGroupingEnabled() ? "on" : "off"}`,
+							"info",
+						);
 					return;
 				}
 				setToolGroupingEnabled(next);
 				if (!next) ungroupActiveToolGroups();
 				if (ctx.hasUI) {
 					ctx.ui.setToolsExpanded(ctx.ui.getToolsExpanded());
-					ctx.ui.notify(`Tool grouping: ${next ? "on" : "off"}${next ? " (future adjacent tool rows)" : ""}`, "info");
+					ctx.ui.notify(
+						`Tool grouping: ${next ? "on" : "off"}${next ? " (future adjacent tool rows)" : ""}`,
+						"info",
+					);
 				}
 				return;
 			}
@@ -7126,30 +9036,44 @@ export default async function (pi: ExtensionAPI) {
 					writeSettingsKey("toolBranchRgbGray", undefined);
 					writeSettingsKey("toolBranchColorMode", undefined);
 					if (ctx.hasUI) refreshAllToolBranchVisuals(ctx);
-					if (ctx.hasUI) ctx.ui.notify(`Branch color → fixed rgb(${DEFAULT_TOOL_BRANCH_GRAY}) (default)`, "info");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Branch color → fixed rgb(${DEFAULT_TOOL_BRANCH_GRAY}) (default)`,
+							"info",
+						);
 					return;
 				}
 				if (arg === "theme") {
 					writeSettingsKey("toolBranchColorMode", "theme");
 					if (ctx.hasUI) refreshAllToolBranchVisuals(ctx);
-					if (ctx.hasUI) ctx.ui.notify("Branch color → follow pi theme (dim/muted)", "info");
+					if (ctx.hasUI)
+						ctx.ui.notify("Branch color → follow pi theme (dim/muted)", "info");
 					return;
 				}
 				if (arg === "fixed") {
 					writeSettingsKey("toolBranchColorMode", "fixed");
 					if (ctx.hasUI) refreshAllToolBranchVisuals(ctx);
-					if (ctx.hasUI) ctx.ui.notify(`Branch color → fixed rgb(${getConfiguredToolBranchGray()})`, "info");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Branch color → fixed rgb(${getConfiguredToolBranchGray()})`,
+							"info",
+						);
 					return;
 				}
 				const gray = Number.parseInt(arg, 10);
 				if (!Number.isFinite(gray) || gray < 0 || gray > 255) {
-					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-my-pi branch <0-255> | theme | fixed | reset", "error");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							"Usage: /cc-my-pi branch <0-255> | theme | fixed | reset",
+							"error",
+						);
 					return;
 				}
 				writeSettingsKey("toolBranchRgbGray", gray);
 				writeSettingsKey("toolBranchColorMode", "fixed");
 				if (ctx.hasUI) refreshAllToolBranchVisuals(ctx);
-				if (ctx.hasUI) ctx.ui.notify(`Branch color → fixed rgb(${gray})`, "info");
+				if (ctx.hasUI)
+					ctx.ui.notify(`Branch color → fixed rgb(${gray})`, "info");
 				return;
 			}
 
@@ -7169,7 +9093,11 @@ export default async function (pi: ExtensionAPI) {
 				}
 				const n = Number.parseInt(arg, 10);
 				if (!Number.isFinite(n) || n <= 0 || n > 150) {
-					if (ctx.hasUI) ctx.ui.notify("Usage: /cc-my-pi diff <1-150> | stock | status", "error");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							"Usage: /cc-my-pi diff <1-150> | stock | status",
+							"error",
+						);
 					return;
 				}
 				writeSettingsKey("diffCollapsedLines", n);
@@ -7183,17 +9111,28 @@ export default async function (pi: ExtensionAPI) {
 			if (sub === "detail" || sub === "extra") {
 				const next = booleanMode(parts[1], extraToolOutputExpanded);
 				if (next === undefined) {
-					if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-my-pi detail ${TOOL_BOOL_MODES.join("|")}`, "error");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Usage: /cc-my-pi detail ${TOOL_BOOL_MODES.join("|")}`,
+							"error",
+						);
 					return;
 				}
 				if (next === "status") {
-					if (ctx.hasUI) ctx.ui.notify(`Extra tool detail: ${extraToolOutputExpanded ? "on" : "off"}`, "info");
+					if (ctx.hasUI)
+						ctx.ui.notify(
+							`Extra tool detail: ${extraToolOutputExpanded ? "on" : "off"}`,
+							"info",
+						);
 					return;
 				}
 				setExtraToolDetailMode(next);
 				if (ctx.hasUI) {
 					ctx.ui.setToolsExpanded(ctx.ui.getToolsExpanded());
-					ctx.ui.notify(`Extra tool detail: ${extraToolOutputExpanded ? "on" : "off"}`, "info");
+					ctx.ui.notify(
+						`Extra tool detail: ${extraToolOutputExpanded ? "on" : "off"}`,
+						"info",
+					);
 				}
 				return;
 			}
@@ -7221,7 +9160,8 @@ export default async function (pi: ExtensionAPI) {
 	// Plain handler object (not a registered command); routed from /cc-my-pi.
 	const THEME_MODES = ["on", "off", "toggle", "status"] as const;
 	const themeCommand: Parameters<ExtensionAPI["registerCommand"]>[1] = {
-		description: "Toggle whether tool borders / branch rules / diff colors follow the active pi theme",
+		description:
+			"Toggle whether tool borders / branch rules / diff colors follow the active pi theme",
 		async handler(args, ctx) {
 			const raw = args.trim().toLowerCase();
 			const current = themeAdaptiveEnabled();
@@ -7235,22 +9175,30 @@ export default async function (pi: ExtensionAPI) {
 					const settings = readSettings();
 					const verbKey = settings.spinnerVerbColor || "borderAccent";
 					const statusKey = settings.spinnerStatusColor || "muted";
-					const verbAnsi = safeFgAnsi(theme, verbKey) ?? safeFgAnsi(theme, "accent");
-					const statusAnsi = safeFgAnsi(theme, statusKey) ?? safeFgAnsi(theme, "muted");
+					const verbAnsi =
+						safeFgAnsi(theme, verbKey) ?? safeFgAnsi(theme, "accent");
+					const statusAnsi =
+						safeFgAnsi(theme, statusKey) ?? safeFgAnsi(theme, "muted");
 					const chromePreview = resolveThemeChromeFg(theme);
 					// Print a short preview of what we derived.
 					const preview = [
 						`chrome      : ${chromePreview ? `${chromePreview}─┌ User ├─\x1b[39m` : "(unchanged)"}`,
-						`  (user box, tool rules, branches)`, 
+						`  (user box, tool rules, branches)`,
 						`muted text  : ${safeFgAnsi(theme, "muted") ? `${safeFgAnsi(theme, "muted")}example dim text\x1b[39m` : "(unchanged)"}`,
 						`diff add    : ${safeFgAnsi(theme, "toolDiffAdded") ? `${safeFgAnsi(theme, "toolDiffAdded")}+ added line\x1b[39m` : "(unchanged)"}`,
 						`diff del    : ${safeFgAnsi(theme, "toolDiffRemoved") ? `${safeFgAnsi(theme, "toolDiffRemoved")}- removed line\x1b[39m` : "(unchanged)"}`,
 						`spinner verb: ${verbAnsi ? `${verbAnsi}Cooking…\x1b[39m` : "(unchanged)"} (key: ${verbKey})`,
 						`spinner stat: ${statusAnsi ? `${statusAnsi}(thinking · ↓ 10 tokens · 2s)\x1b[39m` : "(unchanged)"} (key: ${statusKey})`,
 					].join("\n  ");
-					ctx.ui.notify(`Theme adaptive: ${state} (theme "${themeName}")\n  ${preview}`, "info");
+					ctx.ui.notify(
+						`Theme adaptive: ${state} (theme "${themeName}")\n  ${preview}`,
+						"info",
+					);
 				} else {
-					ctx.ui.notify(`Theme adaptive: ${state} (theme "${themeName}")`, "info");
+					ctx.ui.notify(
+						`Theme adaptive: ${state} (theme "${themeName}")`,
+						"info",
+					);
 				}
 				return;
 			}
@@ -7260,7 +9208,11 @@ export default async function (pi: ExtensionAPI) {
 			else if (raw === "off") next = false;
 			else if (raw === "toggle") next = !current;
 			else {
-				if (ctx.hasUI) ctx.ui.notify(`Unknown option "${raw}". Options: ${THEME_MODES.join(", ")}`, "error");
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						`Unknown option "${raw}". Options: ${THEME_MODES.join(", ")}`,
+						"error",
+					);
 				return;
 			}
 
@@ -7276,7 +9228,9 @@ export default async function (pi: ExtensionAPI) {
 				resetThemePalette();
 			}
 			if (ctx.hasUI) {
-				const label = next ? "on — colors follow pi theme" : "off — fixed Claude palette";
+				const label = next
+					? "on — colors follow pi theme"
+					: "off — fixed Claude palette";
 				ctx.ui.notify(`Theme adaptive: ${label}`, "info");
 			}
 		},
@@ -7285,17 +9239,38 @@ export default async function (pi: ExtensionAPI) {
 	// /cc-my-pi spinner — pick which theme color keys drive the spinner verb
 	// and status suffix. Plain handler object; routed from /cc-my-pi.
 	const COMMON_COLOR_KEYS: readonly string[] = [
-		"accent", "borderAccent", "success", "error", "warning",
-		"muted", "dim", "text", "thinkingText",
-		"toolTitle", "mdHeading", "mdCode", "mdLink", "mdListBullet",
+		"accent",
+		"borderAccent",
+		"success",
+		"error",
+		"warning",
+		"muted",
+		"dim",
+		"text",
+		"thinkingText",
+		"toolTitle",
+		"mdHeading",
+		"mdCode",
+		"mdLink",
+		"mdListBullet",
 		"bashMode",
-		"thinkingLow", "thinkingMedium", "thinkingHigh", "thinkingXhigh",
-		"syntaxKeyword", "syntaxFunction", "syntaxString", "syntaxType",
+		"thinkingLow",
+		"thinkingMedium",
+		"thinkingHigh",
+		"thinkingXhigh",
+		"syntaxKeyword",
+		"syntaxFunction",
+		"syntaxString",
+		"syntaxType",
 	];
 	const spinnerCommand: Parameters<ExtensionAPI["registerCommand"]>[1] = {
-		description: "Set the spinner verb or status theme color, or preview current values",
+		description:
+			"Set the spinner verb or status theme color, or preview current values",
 		async handler(args, ctx) {
-			const parts = args.trim().split(/\s+/).filter((p) => p.length > 0);
+			const parts = args
+				.trim()
+				.split(/\s+/)
+				.filter((p) => p.length > 0);
 			const sub = (parts[0] ?? "").toLowerCase();
 			const theme = ctx.hasUI ? (ctx.ui.theme as any) : null;
 			const settings = readSettings();
@@ -7305,7 +9280,10 @@ export default async function (pi: ExtensionAPI) {
 			if (!sub || sub === "preview") {
 				if (!ctx.hasUI) return;
 				if (!theme) {
-					ctx.ui.notify(`Spinner verb: ${currentVerb}, status: ${currentStatus} (no theme)`, "info");
+					ctx.ui.notify(
+						`Spinner verb: ${currentVerb}, status: ${currentStatus} (no theme)`,
+						"info",
+					);
 					return;
 				}
 				const lines: string[] = [
@@ -7315,7 +9293,12 @@ export default async function (pi: ExtensionAPI) {
 				];
 				for (const key of COMMON_COLOR_KEYS) {
 					const ansi = safeFgAnsi(theme, key);
-					const marker = key === currentVerb ? "(verb)" : key === currentStatus ? "(status)" : "";
+					const marker =
+						key === currentVerb
+							? "(verb)"
+							: key === currentStatus
+								? "(status)"
+								: "";
 					const sample = ansi ? `${ansi}Cooking…\x1b[39m` : "(unmapped)";
 					lines.push(`  ${key.padEnd(16)} ${sample} ${marker}`);
 				}
@@ -7327,29 +9310,44 @@ export default async function (pi: ExtensionAPI) {
 				writeSettingsKey("spinnerVerbColor", undefined);
 				writeSettingsKey("spinnerStatusColor", undefined);
 				bustSpinnerSettingsCache();
-				if (ctx.hasUI) ctx.ui.notify("Spinner colors reset to defaults (verb=borderAccent, status=muted)", "info");
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						"Spinner colors reset to defaults (verb=borderAccent, status=muted)",
+						"info",
+					);
 				return;
 			}
 
 			if (sub !== "verb" && sub !== "status") {
-				if (ctx.hasUI) ctx.ui.notify(`Usage: /cc-my-pi spinner verb <key> | status <key> | reset | preview`, "error");
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						`Usage: /cc-my-pi spinner verb <key> | status <key> | reset | preview`,
+						"error",
+					);
 				return;
 			}
 
 			const key = parts[1];
 			if (!key) {
-				if (ctx.hasUI) ctx.ui.notify(`Missing color key. Try /cc-my-pi spinner preview to see available keys.`, "error");
+				if (ctx.hasUI)
+					ctx.ui.notify(
+						`Missing color key. Try /cc-my-pi spinner preview to see available keys.`,
+						"error",
+					);
 				return;
 			}
 
 			// Validate the key resolves to *some* color in the active theme;
 			// accept anyway if the user insists so themes with custom keys work.
 			const ansi = theme ? safeFgAnsi(theme, key) : null;
-			const settingKey = sub === "verb" ? "spinnerVerbColor" : "spinnerStatusColor";
+			const settingKey =
+				sub === "verb" ? "spinnerVerbColor" : "spinnerStatusColor";
 			writeSettingsKey(settingKey, key);
 			bustSpinnerSettingsCache();
 			if (ctx.hasUI) {
-				const sample = ansi ? `${ansi}sample\x1b[39m` : "(key unmapped in current theme)";
+				const sample = ansi
+					? `${ansi}sample\x1b[39m`
+					: "(key unmapped in current theme)";
 				ctx.ui.notify(`Spinner ${sub} → ${key} ${sample}`, "info");
 			}
 		},
@@ -7359,6 +9357,10 @@ export default async function (pi: ExtensionAPI) {
 		// Join deferred companion registration (header/statusline/queue/…).
 		// Started in factory without await so later packages load in parallel.
 		await optionalBundlesReady;
+		// Re-register bundled definitions after every package has loaded. This makes
+		// cc-my-pi's adapted task tools win if legacy @tintinweb/pi-tasks remains
+		// installed during migration; its `tasks` overlay is suppressed separately.
+		for (const tool of bundledTaskTools) (pi as any).registerTool(tool);
 		clearRtkRewriteState();
 		if (!ctx.hasUI) return;
 		patchUiNotifications(ctx.ui);
@@ -7391,9 +9393,13 @@ export default async function (pi: ExtensionAPI) {
 					let outcome: SetupWizardOutcome = "completed";
 					try {
 						const { openCcToolsSetupWizard } = await loadSettingsUi();
-						outcome = await openCcToolsSetupWizard(ctx, ccToolsSettingsController);
+						outcome = await openCcToolsSetupWizard(
+							ctx,
+							ccToolsSettingsController,
+						);
 					} finally {
-						if (outcome !== "skip-once") writeSettingsKey("ccMyPiSetupDone", true);
+						if (outcome !== "skip-once")
+							writeSettingsKey("ccMyPiSetupDone", true);
 					}
 				})();
 			}, 250);
@@ -7415,7 +9421,10 @@ export default async function (pi: ExtensionAPI) {
 		clearPreservedBashPreviews();
 		const toolName = (event as any)?.toolName;
 		if (toolName !== "bash") return;
-		trackRtkOriginalBashCommand((event as any)?.toolCallId, (event as any)?.args);
+		trackRtkOriginalBashCommand(
+			(event as any)?.toolCallId,
+			(event as any)?.args,
+		);
 	});
 
 	const cwd = process.cwd();
@@ -7459,23 +9468,55 @@ export default async function (pi: ExtensionAPI) {
 			});
 			return makeText(
 				ctx.lastComponent,
-				toolHeader("Read", summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+				activityToolCallText(
+					{
+						active: "Reading",
+						past: "Read",
+						count: 1,
+						noun: "file",
+						plural: "files",
+						detail: summary,
+					},
+					theme,
+					ctx,
+				),
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {
-				return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", "Reading..."), expanded, theme, ctx));
+				return makeText(
+					ctx.lastComponent,
+					runningPreviewBlock(
+						result,
+						theme.fg("dim", "Reading..."),
+						expanded,
+						theme,
+						ctx,
+					),
+				);
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
-			if (getFirstImageBlock(result)) return renderReadImageResult(result, expanded, theme, ctx);
+			if (getFirstImageBlock(result))
+				return renderReadImageResult(result, expanded, theme, ctx);
 			const details = result.details as ReadToolDetails | undefined;
-			const content = result.content.find((block: any) => block?.type === "text");
-			if (content?.type !== "text") return makeText(ctx.lastComponent, withBranch(theme.fg("error", "No text content"), theme));
+			const content = result.content.find(
+				(block: any) => block?.type === "text",
+			);
+			if (content?.type !== "text")
+				return makeText(
+					ctx.lastComponent,
+					withBranch(theme.fg("error", "No text content"), theme),
+				);
 			const lines = content.text.split("\n");
 			let text = theme.fg("muted", `${lines.length} lines loaded`);
-			if (details?.truncation?.truncated) text += theme.fg("warning", " (truncated)");
-			if (!expanded) return makeText(ctx.lastComponent, withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme));
+			if (details?.truncation?.truncated)
+				text += theme.fg("warning", " (truncated)");
+			if (!expanded)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme),
+				);
 			text += `\n${buildPreviewText(lines, false, theme, previewLimit(), lines.length, (line) => theme.fg("dim", line || " "))}`;
 			return makeText(ctx.lastComponent, withBranch(text, theme));
 		},
@@ -7493,33 +9534,63 @@ export default async function (pi: ExtensionAPI) {
 		renderCall(args, theme, ctx) {
 			syncToolCallStatus(ctx);
 			const rewrite = ensureRtkRewriteForContext(ctx, args);
-			const summary = stableCallSummary(ctx, "_callSummary", () => summarizeText(args.command, 72));
+			const summary = stableCallSummary(ctx, "_callSummary", () =>
+				summarizeText(args.command, 72),
+			);
+			const activityDetail = summary ? `$ ${summary}` : "";
 			const rtkBadge = rewrite ? theme.fg("muted", " (RTK)") : "";
 			return makeText(
 				ctx.lastComponent,
-				toolHeader("Bash", `${summary}${rtkBadge}`, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+				activityToolCallText(
+					{
+						active: "Running",
+						past: "Ran",
+						count: 1,
+						noun: "shell command",
+						plural: "shell commands",
+						detail: `${activityDetail}${rtkBadge}`,
+					},
+					theme,
+					ctx,
+				),
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			const details = result.details as BashToolDetails | undefined;
 			const rewrite = ensureRtkRewriteForContext(ctx, ctx.args);
-			const output = result.content[0]?.type === "text" ? result.content[0].text : "";
+			const output =
+				result.content[0]?.type === "text" ? result.content[0].text : "";
 			if (isPartial) {
-				const preview = collectNonEmptyLines(output, expanded ? undefined : liveToolPreviewLimit());
+				const preview = collectNonEmptyLines(
+					output,
+					expanded ? undefined : liveToolPreviewLimit(),
+				);
 				const running = runningPreviewBlock(result, "", expanded, theme, ctx, {
 					lines: preview.lines,
 					totalLineCount: preview.total,
 					styleLine: (line) => theme.fg("dim", line),
 					tail: true,
 				});
-				const withRewrite = expanded && rewrite
-					? [running, withBranch(formatRtkRewriteDetails(rewrite, theme), theme)].filter(Boolean).join("\n")
-					: running;
+				const withRewrite =
+					expanded && rewrite
+						? [
+								running,
+								withBranch(formatRtkRewriteDetails(rewrite, theme), theme),
+							]
+								.filter(Boolean)
+								.join("\n")
+						: running;
 				return makeText(ctx.lastComponent, withRewrite);
 			}
 			// Collapsed: only keep the live-preview tail (or nothing). Expanded: full list.
-			const keepTail = !expanded && liveToolPreviewEnabled() ? liveToolPreviewLimit() : undefined;
-			const nonEmpty = collectNonEmptyLines(output, expanded ? undefined : (keepTail ?? 0));
+			const keepTail =
+				!expanded && liveToolPreviewEnabled()
+					? liveToolPreviewLimit()
+					: undefined;
+			const nonEmpty = collectNonEmptyLines(
+				output,
+				expanded ? undefined : (keepTail ?? 0),
+			);
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
 			if (nonEmpty.total > 0 && ctx.state?._bashPreviewReleased !== true) {
@@ -7528,13 +9599,31 @@ export default async function (pi: ExtensionAPI) {
 			}
 			const exitMatch = output.match(/exit code: (\d+)/);
 			const exitCode = exitMatch ? Number.parseInt(exitMatch[1], 10) : null;
-			let text = exitCode === null || exitCode === 0 ? theme.fg("success", "Done") : theme.fg("error", `Exit ${exitCode}`);
+			let text =
+				exitCode === null || exitCode === 0
+					? theme.fg("success", "Done")
+					: theme.fg("error", `Exit ${exitCode}`);
 			text += theme.fg("muted", ` (${nonEmpty.total} lines)`);
-			if (details?.truncation?.truncated) text += theme.fg("warning", " [truncated]");
-			const persistentPreview = shouldPreserveBashPreview(ctx) ? buildPersistentBashPreview(nonEmpty.lines, theme) : "";
-			if (!expanded && persistentPreview) return makeText(ctx.lastComponent, withBranch(`${text}${toolOutputDetailHint(theme, expanded)}\n${persistentPreview}`, theme));
-			if (!expanded && nonEmpty.total > 0) return makeText(ctx.lastComponent, withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme));
-			if (!expanded) return makeText(ctx.lastComponent, withBranch(text, theme));
+			if (details?.truncation?.truncated)
+				text += theme.fg("warning", " [truncated]");
+			const persistentPreview = shouldPreserveBashPreview(ctx)
+				? buildPersistentBashPreview(nonEmpty.lines, theme)
+				: "";
+			if (!expanded && persistentPreview)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(
+						`${text}${toolOutputDetailHint(theme, expanded)}\n${persistentPreview}`,
+						theme,
+					),
+				);
+			if (!expanded && nonEmpty.total > 0)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme),
+				);
+			if (!expanded)
+				return makeText(ctx.lastComponent, withBranch(text, theme));
 			const collapsed = bashCollapsedLimit();
 			if (rewrite) text += `\n${formatRtkRewriteDetails(rewrite, theme)}`;
 			text += `\n${buildPreviewText(nonEmpty.lines, false, theme, collapsed, nonEmpty.total, (line) => theme.fg("dim", line))}`;
@@ -7560,23 +9649,49 @@ export default async function (pi: ExtensionAPI) {
 			});
 			return makeText(
 				ctx.lastComponent,
-				toolHeader("Grep", summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+				toolHeader(
+					"Grep",
+					summary,
+					theme,
+					toolStatusDot(ctx, theme),
+					liveLineCountTrailing(ctx, theme),
+				),
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {
-				return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", "Searching..."), expanded, theme, ctx));
+				return makeText(
+					ctx.lastComponent,
+					runningPreviewBlock(
+						result,
+						theme.fg("dim", "Searching..."),
+						expanded,
+						theme,
+						ctx,
+					),
+				);
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
 			const details = result.details as GrepToolDetails | undefined;
-			const matches = (result.content[0]?.type === "text" ? result.content[0].text : "")
+			const matches = (
+				result.content[0]?.type === "text" ? result.content[0].text : ""
+			)
 				.split("\n")
 				.filter((line) => line.trim().length > 0);
-			if (matches.length === 0) return makeText(ctx.lastComponent, withBranch(theme.fg("muted", "no matches"), theme));
+			if (matches.length === 0)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(theme.fg("muted", "no matches"), theme),
+				);
 			let text = theme.fg("muted", `${matches.length} matches`);
-			if (details?.truncation?.truncated) text += theme.fg("warning", " (truncated)");
-			if (!expanded) return makeText(ctx.lastComponent, withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme));
+			if (details?.truncation?.truncated)
+				text += theme.fg("warning", " (truncated)");
+			if (!expanded)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme),
+				);
 			text += `\n${buildPreviewText(matches, false, theme, previewLimit(), matches.length, (line) => theme.fg("dim", line))}`;
 			return makeText(ctx.lastComponent, withBranch(text, theme));
 		},
@@ -7600,21 +9715,46 @@ export default async function (pi: ExtensionAPI) {
 			});
 			return makeText(
 				ctx.lastComponent,
-				toolHeader("Find", summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+				toolHeader(
+					"Find",
+					summary,
+					theme,
+					toolStatusDot(ctx, theme),
+					liveLineCountTrailing(ctx, theme),
+				),
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {
-				return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", "Finding..."), expanded, theme, ctx));
+				return makeText(
+					ctx.lastComponent,
+					runningPreviewBlock(
+						result,
+						theme.fg("dim", "Finding..."),
+						expanded,
+						theme,
+						ctx,
+					),
+				);
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
-			const items = (result.content[0]?.type === "text" ? result.content[0].text : "")
+			const items = (
+				result.content[0]?.type === "text" ? result.content[0].text : ""
+			)
 				.split("\n")
 				.filter((line) => line.trim().length > 0);
-			if (items.length === 0) return makeText(ctx.lastComponent, withBranch(theme.fg("muted", "no files found"), theme));
+			if (items.length === 0)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(theme.fg("muted", "no files found"), theme),
+				);
 			let text = theme.fg("muted", `${items.length} files`);
-			if (!expanded) return makeText(ctx.lastComponent, withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme));
+			if (!expanded)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme),
+				);
 			// Expanded: grouped find results with icons
 			const maxShow = previewLimit();
 			const shown = items.slice(0, maxShow);
@@ -7628,7 +9768,7 @@ export default async function (pi: ExtensionAPI) {
 			if (remaining > 0) {
 				findLines.push(`  ${theme.fg("muted", `… ${remaining} more files`)}`);
 			}
-			text += `\n${findLines.join('\n')}`;
+			text += `\n${findLines.join("\n")}`;
 			return makeText(ctx.lastComponent, withBranch(text, theme));
 		},
 	});
@@ -7644,24 +9784,56 @@ export default async function (pi: ExtensionAPI) {
 		},
 		renderCall(args, theme, ctx) {
 			syncToolCallStatus(ctx);
-			const summary = stableCallSummary(ctx, "_callSummary", () => sp(args.path ?? "."));
+			const summary = stableCallSummary(ctx, "_callSummary", () =>
+				sp(args.path ?? "."),
+			);
 			return makeText(
 				ctx.lastComponent,
-				toolHeader("List", summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+				activityToolCallText(
+					{
+						active: "Listing",
+						past: "Listed",
+						count: 1,
+						noun: "directory",
+						plural: "directories",
+						detail: summary,
+					},
+					theme,
+					ctx,
+				),
 			);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {
-				return makeText(ctx.lastComponent, runningPreviewBlock(result, theme.fg("dim", "Listing..."), expanded, theme, ctx));
+				return makeText(
+					ctx.lastComponent,
+					runningPreviewBlock(
+						result,
+						theme.fg("dim", "Listing..."),
+						expanded,
+						theme,
+						ctx,
+					),
+				);
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
-			const items = (result.content[0]?.type === "text" ? result.content[0].text : "")
+			const items = (
+				result.content[0]?.type === "text" ? result.content[0].text : ""
+			)
 				.split("\n")
 				.filter((line) => line.trim().length > 0);
-			if (items.length === 0) return makeText(ctx.lastComponent, withBranch(theme.fg("muted", "empty directory"), theme));
+			if (items.length === 0)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(theme.fg("muted", "empty directory"), theme),
+				);
 			let text = theme.fg("muted", `${items.length} entries`);
-			if (!expanded) return makeText(ctx.lastComponent, withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme));
+			if (!expanded)
+				return makeText(
+					ctx.lastComponent,
+					withBranch(`${text}${toolOutputDetailHint(theme, expanded)}`, theme),
+				);
 			// Expanded: tree-view with icons
 			const maxShow = previewLimit();
 			const shown = items.slice(0, maxShow);
@@ -7670,16 +9842,22 @@ export default async function (pi: ExtensionAPI) {
 				const item = shown[i];
 				const isDir = item.endsWith("/");
 				const isLast = i === shown.length - 1 && items.length <= maxShow;
-				const prefix = isLast ? `${FG_RULE}\u2514\u2500\u2500${D_RST} ` : `${FG_RULE}\u251c\u2500\u2500${D_RST} `;
+				const prefix = isLast
+					? `${FG_RULE}\u2514\u2500\u2500${D_RST} `
+					: `${FG_RULE}\u251c\u2500\u2500${D_RST} `;
 				const icon = isDir ? dirIcon() : fileIcon(item);
-				const name = isDir ? theme.fg("accent", theme.bold(item)) : theme.fg("dim", item);
+				const name = isDir
+					? theme.fg("accent", theme.bold(item))
+					: theme.fg("dim", item);
 				treeLines.push(`${prefix}${icon}${name}`);
 			}
 			const remaining = items.length - shown.length;
 			if (remaining > 0) {
-				treeLines.push(`${FG_RULE}\u2514\u2500\u2500${D_RST} ${theme.fg("muted", `\u2026 ${remaining} more entries`)}`);
+				treeLines.push(
+					`${FG_RULE}\u2514\u2500\u2500${D_RST} ${theme.fg("muted", `\u2026 ${remaining} more entries`)}`,
+				);
 			}
-			text += `\n${treeLines.join('\n')}`;
+			text += `\n${treeLines.join("\n")}`;
 			return makeText(ctx.lastComponent, withBranch(text, theme));
 		},
 	});
@@ -7701,13 +9879,27 @@ export default async function (pi: ExtensionAPI) {
 			} catch {
 				old = null;
 			}
-			const result = await writeTool.execute(toolCallId, params, signal, onUpdate);
+			const result = await writeTool.execute(
+				toolCallId,
+				params,
+				signal,
+				onUpdate,
+			);
 			const content = params.content ?? "";
 			if (old !== null && old !== content) {
 				const diff = parseDiff(old, content);
-				(result as any).details = { _type: "diff", summary: summarizeDiff(diff.added, diff.removed), diff, language: lang(fp) };
+				(result as any).details = {
+					_type: "diff",
+					summary: summarizeDiff(diff.added, diff.removed),
+					diff,
+					language: lang(fp),
+				};
 			} else if (old === null) {
-				(result as any).details = { _type: "new", lines: lineCount(content), filePath: fp };
+				(result as any).details = {
+					_type: "new",
+					lines: lineCount(content),
+					filePath: fp,
+				};
 			} else if (old === content) {
 				(result as any).details = { _type: "noChange" };
 			}
@@ -7715,48 +9907,92 @@ export default async function (pi: ExtensionAPI) {
 		},
 		renderCall(args, theme, ctx) {
 			const fp = args?.path ?? (args as any)?.file_path ?? "";
-			const revealSummary = shouldRevealCallArgs(ctx) || (!!fp && hasOwnArg(args, "content"));
+			const revealSummary =
+				shouldRevealCallArgs(ctx) || (!!fp && hasOwnArg(args, "content"));
 			syncToolCallStatus(ctx);
 			const wasNew = getWriteWasNewFile(ctx, cwd, fp, revealSummary);
-			const label = wasNew === true ? "Create" : "Write";
-			const summary = stableCallSummary(ctx, "_callSummary", () => {
-				const base = sp(fp);
-				return shouldRevealCallArgs(ctx) ? `${base} ${theme.fg("muted", `(${lineCount(args.content ?? "")} lines)`)}` : base;
-			}, revealSummary);
-			const hdr = toolHeader(label, summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme));
-			return makeText(ctx.lastComponent, hdr);
+			const summary = stableCallSummary(
+				ctx,
+				"_callSummary",
+				() => {
+					const base = sp(fp);
+					return shouldRevealCallArgs(ctx)
+						? `${base} ${theme.fg("muted", `(${lineCount(args.content ?? "")} lines)`)}`
+						: base;
+				},
+				revealSummary,
+			);
+			return makeText(
+				ctx.lastComponent,
+				activityToolCallText(
+					{
+						active: wasNew === true ? "Creating" : "Writing",
+						past: wasNew === true ? "Created" : "Wrote",
+						count: 1,
+						noun: "file",
+						plural: "files",
+						detail: summary,
+					},
+					theme,
+					ctx,
+				),
+			);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {
-				return makeText(ctx.lastComponent, runningPreviewBlock(result, "", expanded, theme, ctx));
+				return makeText(
+					ctx.lastComponent,
+					runningPreviewBlock(result, "", expanded, theme, ctx),
+				);
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
-			if (typeof ctx?.toolCallId === "string") WRITE_EXISTED_BEFORE.delete(ctx.toolCallId);
+			if (typeof ctx?.toolCallId === "string")
+				WRITE_EXISTED_BEFORE.delete(ctx.toolCallId);
 			if (ctx.isError) {
 				const e =
 					result.content
 						?.filter((c: any) => c.type === "text")
 						.map((c: any) => c.text || "")
 						.join("\n") ?? "Error";
-				return makeText(ctx.lastComponent, withBranch(theme.fg("error", e), theme));
+				return makeText(
+					ctx.lastComponent,
+					withBranch(theme.fg("error", e), theme),
+				);
 			}
 			const d = (result as any).details;
 			if (d?._type === "diff") {
-				const previewLines = ctx.expanded ? MAX_RENDER_LINES : (diffCollapsedLimit() ?? 24);
-				const hunks = d.diff?.lines?.filter((l: any) => l.type === "sep").length + (d.diff?.lines?.length ? 1 : 0);
+				const previewLines = ctx.expanded
+					? MAX_RENDER_LINES
+					: (diffCollapsedLimit() ?? 24);
+				const hunks =
+					d.diff?.lines?.filter((l: any) => l.type === "sep").length +
+					(d.diff?.lines?.length ? 1 : 0);
 				const diffWidth = branchDiffWidth();
-				const mode = shouldUseSplit(d.diff, diffWidth, previewLines) ? "split" : "unified";
-				const richSummary = diffSummaryWithMeta(d.diff.added, d.diff.removed, hunks, mode);
+				const mode = shouldUseSplit(d.diff, diffWidth, previewLines)
+					? "split"
+					: "unified";
+				const richSummary = diffSummaryWithMeta(
+					d.diff.added,
+					d.diff.removed,
+					hunks,
+					mode,
+				);
 				const key = `wd:${diffWidth}:${d.summary}:${d.diff?.lines?.length ?? 0}:${d.language ?? ""}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 				if (ctx.state._wdk !== key) {
 					ctx.state._wdk = key;
-					ctx.state._wdt = withFinalBranchBlock(`${richSummary}\n${theme.fg("muted", "rendering diff…")}`, theme);
+					ctx.state._wdt = withFinalBranchBlock(
+						`${richSummary}\n${theme.fg("muted", "rendering diff…")}`,
+						theme,
+					);
 					const dc = resolveDiffColors(theme);
 					renderSplit(d.diff, d.language, previewLines, dc, diffWidth)
 						.then((rendered) => {
 							if (ctx.state._wdk !== key) return;
-							ctx.state._wdt = withFinalBranchBlock(`${richSummary}\n${rendered}`, theme);
+							ctx.state._wdt = withFinalBranchBlock(
+								`${richSummary}\n${rendered}`,
+								theme,
+							);
 							safeInvalidate(ctx);
 						})
 						.catch(() => {
@@ -7765,24 +10001,48 @@ export default async function (pi: ExtensionAPI) {
 							safeInvalidate(ctx);
 						});
 				}
-				return makeText(ctx.lastComponent, ctx.state._wdt ?? withBranch(richSummary, theme));
+				return makeText(
+					ctx.lastComponent,
+					ctx.state._wdt ?? withBranch(richSummary, theme),
+				);
 			}
-			if (d?._type === "noChange") return makeText(ctx.lastComponent, withBranch(theme.fg("muted", "✓ no changes"), theme));
+			if (d?._type === "noChange")
+				return makeText(
+					ctx.lastComponent,
+					withBranch(theme.fg("muted", "✓ no changes"), theme),
+				);
 			if (d?._type === "new") {
-				const content = typeof ctx.args?.content === "string" ? ctx.args.content : "";
-				const lineTotal = typeof d.lines === "number" ? d.lines : lineCount(content);
+				const content =
+					typeof ctx.args?.content === "string" ? ctx.args.content : "";
+				const lineTotal =
+					typeof d.lines === "number" ? d.lines : lineCount(content);
 				const contentHash = hashText(content);
 				const richSummary = diffSummaryWithMeta(lineTotal, 0, 0, "new file");
-				const previewLines = ctx.expanded ? MAX_RENDER_LINES : (diffCollapsedLimit() ?? 24);
+				const previewLines = ctx.expanded
+					? MAX_RENDER_LINES
+					: (diffCollapsedLimit() ?? 24);
 				const diffWidth = branchDiffWidth();
 				const pk = `nf:${d.filePath}:${contentHash}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
 				if (ctx.state._nfk !== pk) {
 					ctx.state._nfk = pk;
-					ctx.state._nft = withFinalBranchBlock(`${richSummary}\n${renderNewFileLines(content, previewLines, diffWidth)}`, theme);
+					ctx.state._nft = withFinalBranchBlock(
+						`${richSummary}\n${renderNewFileLines(content, previewLines, diffWidth)}`,
+						theme,
+					);
 				}
-				return makeText(ctx.lastComponent, ctx.state._nft ?? withBranch(`${richSummary} ${theme.fg("muted", `(${lineTotal} lines)`)}`, theme));
+				return makeText(
+					ctx.lastComponent,
+					ctx.state._nft ??
+						withBranch(
+							`${richSummary} ${theme.fg("muted", `(${lineTotal} lines)`)}`,
+							theme,
+						),
+				);
 			}
-			return makeText(ctx.lastComponent, withBranch(theme.fg("success", "Written"), theme));
+			return makeText(
+				ctx.lastComponent,
+				withBranch(theme.fg("success", "Written"), theme),
+			);
 		},
 	});
 
@@ -7795,14 +10055,30 @@ export default async function (pi: ExtensionAPI) {
 		async execute(toolCallId, params, signal, onUpdate, _ctx) {
 			const fp = params.path ?? (params as any).file_path ?? "";
 			const operations = getEditOperations(params);
-			const localizedDiffs = operations.length === 1 ? await computeLocalizedEditDiffs(fp, operations, cwd) : null;
-			const result = await editTool.execute(toolCallId, params, signal, onUpdate);
+			const localizedDiffs =
+				operations.length === 1
+					? await computeLocalizedEditDiffs(fp, operations, cwd)
+					: null;
+			const result = await editTool.execute(
+				toolCallId,
+				params,
+				signal,
+				onUpdate,
+			);
 			if (operations.length === 0) return result;
-			const { diffs, summary, totalLines, totalHunks } = summarizeEditOperations(operations);
-			const baseDetails = (((result as any).details ?? {}) as Record<string, unknown>);
+			const { diffs, summary, totalLines, totalHunks } =
+				summarizeEditOperations(operations);
+			const baseDetails = ((result as any).details ?? {}) as Record<
+				string,
+				unknown
+			>;
 			if (operations.length === 1) {
 				const localized = localizedDiffs?.[0];
-				const editLine = localized?.line ?? (typeof baseDetails.firstChangedLine === "number" ? baseDetails.firstChangedLine : 0);
+				const editLine =
+					localized?.line ??
+					(typeof baseDetails.firstChangedLine === "number"
+						? baseDetails.firstChangedLine
+						: 0);
 				const diff = localized?.diff ?? diffs[0];
 				(result as any).details = {
 					...baseDetails,
@@ -7830,37 +10106,95 @@ export default async function (pi: ExtensionAPI) {
 		renderCall(args, theme, ctx) {
 			const fp = args?.path ?? (args as any)?.file_path ?? "";
 			const operations = getEditOperations(args);
-			const revealSummary = shouldRevealCallArgs(ctx) || (!!fp && hasOwnArg(args, "edits"));
-			const summary = stableCallSummary(ctx, "_callSummary", () => shouldRevealCallArgs(ctx) && operations.length > 1 ? `${sp(fp)} ${theme.fg("muted", `(${operations.length} edits)`)}` : sp(fp), revealSummary);
+			const revealSummary =
+				shouldRevealCallArgs(ctx) || (!!fp && hasOwnArg(args, "edits"));
+			const summary = stableCallSummary(
+				ctx,
+				"_callSummary",
+				() =>
+					shouldRevealCallArgs(ctx) && operations.length > 1
+						? `${sp(fp)} ${theme.fg("muted", `(${operations.length} edits)`)}`
+						: sp(fp),
+				revealSummary,
+			);
 			syncToolCallStatus(ctx);
-			const hdr = toolHeader("Edit", summary, theme, ` ${toolStatusDot(ctx, theme)}`, liveLineCountTrailing(ctx, theme));
-			if (!(ctx.argsComplete && operations.length > 0)) return makeText(ctx.lastComponent, hdr);
+			const hdr = activityToolCallText(
+				{
+					active: "Making",
+					past: "Made",
+					count: Math.max(1, operations.length),
+					noun: "edit",
+					plural: "edits",
+					detail: stripAnsi(summary).replace(/\s+\(\d+ edits\)$/, ""),
+				},
+				theme,
+				ctx,
+			);
+			if (!(ctx.argsComplete && operations.length > 0))
+				return makeText(ctx.lastComponent, hdr);
 			const diffWidth = branchDiffWidth();
 			const key = `edit:${fp}:${hashText(operations.map((edit) => `${edit.oldText}\u0000${edit.newText}`).join("\u0001"))}:${diffWidth}:${ctx.expanded ? 1 : 0}:${diffCollapsedLimit() ?? "stock"}`;
-			const { diffs: fallbackDiffs, summary: editSummary } = getCachedEditOperationSummary(ctx, key, operations);
+			const { diffs: fallbackDiffs, summary: editSummary } =
+				getCachedEditOperationSummary(ctx, key, operations);
 			if (ctx.state._pk !== key) {
 				ctx.state._pk = key;
 				ctx.state._ptBody = theme.fg("muted", "(rendering…)");
-				ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+				ctx.state._ptDisplay = indentBranchBlock(
+					withBranch(ctx.state._ptBody, theme, false, true),
+				);
 				const lg = lang(fp);
 				void computeLocalizedEditDiffs(fp, operations, cwd)
 					.then((localizedDiffs) => {
 						if (ctx.state._pk !== key) return;
-						const diffs = localizedDiffs?.map((entry) => entry.diff) ?? fallbackDiffs;
-						const lines = localizedDiffs?.map((entry) => entry.line) ?? diffs.map((diff) => getFirstChangedNewLine(diff));
-						renderEditPreviewBody(ctx, key, theme, lg, operations, diffs, lines, editSummary);
+						const diffs =
+							localizedDiffs?.map((entry) => entry.diff) ?? fallbackDiffs;
+						const lines =
+							localizedDiffs?.map((entry) => entry.line) ??
+							diffs.map((diff) => getFirstChangedNewLine(diff));
+						renderEditPreviewBody(
+							ctx,
+							key,
+							theme,
+							lg,
+							operations,
+							diffs,
+							lines,
+							editSummary,
+						);
 					})
 					.catch(() => {
 						if (ctx.state._pk !== key) return;
-						renderEditPreviewBody(ctx, key, theme, lg, operations, fallbackDiffs, fallbackDiffs.map((diff) => getFirstChangedNewLine(diff)), editSummary);
+						renderEditPreviewBody(
+							ctx,
+							key,
+							theme,
+							lg,
+							operations,
+							fallbackDiffs,
+							fallbackDiffs.map((diff) => getFirstChangedNewLine(diff)),
+							editSummary,
+						);
 					});
 			}
-				const body = liveBranchDisplay(ctx.state, theme) ?? (ctx.state._ptDisplay as string | undefined);
+			const body =
+				liveBranchDisplay(ctx.state, theme) ??
+				(ctx.state._ptDisplay as string | undefined);
 			return makeText(ctx.lastComponent, body ? `${hdr}\n${body}` : hdr);
 		},
 		renderResult(result, { expanded, isPartial }, theme, ctx) {
 			if (isPartial) {
-				return makeText(ctx.lastComponent, indentBranchBlock(runningPreviewBlock(result, theme.fg("dim", "Editing..."), expanded, theme, ctx)));
+				return makeText(
+					ctx.lastComponent,
+					indentBranchBlock(
+						runningPreviewBlock(
+							result,
+							theme.fg("dim", "Editing..."),
+							expanded,
+							theme,
+							ctx,
+						),
+					),
+				);
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
@@ -7870,20 +10204,49 @@ export default async function (pi: ExtensionAPI) {
 						?.filter((c: any) => c.type === "text")
 						.map((c: any) => c.text || "")
 						.join("\n") ?? "Error";
-				return makeText(ctx.lastComponent, indentBranchBlock(withBranch(theme.fg("error", e), theme)));
+				return makeText(
+					ctx.lastComponent,
+					indentBranchBlock(withBranch(theme.fg("error", e), theme)),
+				);
 			}
 			if ((result as any).details?._type === "editInfo") {
 				const { editLine, hunks, added, removed } = (result as any).details;
 				const loc = formatLineMeta(editLine ?? 0, theme);
-				const summary = diffSummaryWithMeta(added ?? 0, removed ?? 0, hunks ?? 0, "");
-				return makeText(ctx.lastComponent, indentBranchBlock(withBranch(`${summary}${loc}`, theme)));
+				const summary = diffSummaryWithMeta(
+					added ?? 0,
+					removed ?? 0,
+					hunks ?? 0,
+					"",
+				);
+				return makeText(
+					ctx.lastComponent,
+					indentBranchBlock(withBranch(`${summary}${loc}`, theme)),
+				);
 			}
 			if ((result as any).details?._type === "multiEditInfo") {
-				const { editCount, diffLineCount, hunks, totalAdded, totalRemoved } = (result as any).details;
-				const summary = diffSummaryWithMeta(totalAdded ?? 0, totalRemoved ?? 0, hunks ?? 0, "");
-				return makeText(ctx.lastComponent, indentBranchBlock(withBranch(`${editCount} edits ${summary}${typeof diffLineCount === "number" ? ` ${theme.fg("muted", `(${diffLineCount} diff lines)`)}` : ""}`, theme)));
+				const { editCount, diffLineCount, hunks, totalAdded, totalRemoved } = (
+					result as any
+				).details;
+				const summary = diffSummaryWithMeta(
+					totalAdded ?? 0,
+					totalRemoved ?? 0,
+					hunks ?? 0,
+					"",
+				);
+				return makeText(
+					ctx.lastComponent,
+					indentBranchBlock(
+						withBranch(
+							`${editCount} edits ${summary}${typeof diffLineCount === "number" ? ` ${theme.fg("muted", `(${diffLineCount} diff lines)`)}` : ""}`,
+							theme,
+						),
+					),
+				);
 			}
-			return makeText(ctx.lastComponent, indentBranchBlock(withBranch(theme.fg("success", "Applied"), theme)));
+			return makeText(
+				ctx.lastComponent,
+				indentBranchBlock(withBranch(theme.fg("success", "Applied"), theme)),
+			);
 		},
 	});
 
@@ -7891,7 +10254,10 @@ export default async function (pi: ExtensionAPI) {
 	const registerOpenAiToolOverrides = (): void => {
 		let allTools: unknown[] = [];
 		try {
-			allTools = typeof (pi as any).getAllTools === "function" ? (pi as any).getAllTools() : [];
+			allTools =
+				typeof (pi as any).getAllTools === "function"
+					? (pi as any).getAllTools()
+					: [];
 		} catch {
 			allTools = [];
 		}
@@ -7900,25 +10266,45 @@ export default async function (pi: ExtensionAPI) {
 			const record = tool as Record<string, unknown>;
 			const name = typeof record.name === "string" ? record.name : "";
 			if (!name || wrappedOpenAiTools.has(name)) continue;
-			const execute = typeof record.execute === "function" ? (record.execute as any) : null;
+			const execute =
+				typeof record.execute === "function" ? (record.execute as any) : null;
 			if (!execute) continue;
-			const rawLabel = typeof record.label === "string" ? record.label.trim() : "";
-			const label = rawLabel && rawLabel !== name && !rawLabel.includes("_") ? rawLabel : humanizeToolName(name);
-			const description = typeof record.description === "string" ? record.description : label;
+			const rawLabel =
+				typeof record.label === "string" ? record.label.trim() : "";
+			const label =
+				rawLabel && rawLabel !== name && !rawLabel.includes("_")
+					? rawLabel
+					: humanizeToolName(name);
+			const description =
+				typeof record.description === "string" ? record.description : label;
 			(pi as any).registerTool({
 				name,
 				label,
 				description,
 				parameters: record.parameters,
-				prepareArguments: typeof record.prepareArguments === "function" ? record.prepareArguments : undefined,
-				async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-					return await Promise.resolve(execute(toolCallId, params, signal, onUpdate, ctx));
+				prepareArguments:
+					typeof record.prepareArguments === "function"
+						? record.prepareArguments
+						: undefined,
+				async execute(
+					toolCallId: string,
+					params: any,
+					signal: AbortSignal | undefined,
+					onUpdate: any,
+					ctx: any,
+				) {
+					return await Promise.resolve(
+						execute(toolCallId, params, signal, onUpdate, ctx),
+					);
 				},
 				renderCall(args: any, theme: Theme, ctx: any) {
-					if (name === "apply_patch") return renderApplyPatchCall(args, theme, ctx, sp);
+					if (name === "apply_patch")
+						return renderApplyPatchCall(args, theme, ctx, sp);
 					syncToolCallStatus(ctx);
 					ctx.state._openAiPatchFiles = [];
-					const summary = stableCallSummary(ctx, "_callSummary", () => summarizeOpenAiToolCall(name, args, theme, sp));
+					const summary = stableCallSummary(ctx, "_callSummary", () =>
+						summarizeOpenAiToolCall(name, args, theme, sp),
+					);
 					if (name === "Skill" || label === "Skill") {
 						const skillName =
 							(typeof summary === "string" && summary.startsWith("\0skill:")
@@ -7928,17 +10314,41 @@ export default async function (pi: ExtensionAPI) {
 							"skill";
 						return makeText(
 							ctx.lastComponent,
-							skillHeader(skillName, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+							skillHeader(
+								skillName,
+								theme,
+								toolStatusDot(ctx, theme),
+								liveLineCountTrailing(ctx, theme),
+							),
 						);
 					}
 					return makeText(
 						ctx.lastComponent,
-						toolHeader(label, summary, theme, toolStatusDot(ctx, theme), liveLineCountTrailing(ctx, theme)),
+						toolHeader(
+							label,
+							summary,
+							theme,
+							toolStatusDot(ctx, theme),
+							liveLineCountTrailing(ctx, theme),
+						),
 					);
 				},
-				renderResult(result: any, { expanded, isPartial }: any, theme: Theme, ctx: any) {
-					if (name === "apply_patch") return renderApplyPatchResult(result, isPartial, theme, ctx);
-					return renderOpenAiToolResult(name, result, expanded, isPartial, theme, ctx);
+				renderResult(
+					result: any,
+					{ expanded, isPartial }: any,
+					theme: Theme,
+					ctx: any,
+				) {
+					if (name === "apply_patch")
+						return renderApplyPatchResult(result, isPartial, theme, ctx);
+					return renderOpenAiToolResult(
+						name,
+						result,
+						expanded,
+						isPartial,
+						theme,
+						ctx,
+					);
 				},
 			});
 			wrappedOpenAiTools.add(name);
@@ -7949,7 +10359,10 @@ export default async function (pi: ExtensionAPI) {
 	const registerMcpToolOverrides = (): void => {
 		let allTools: unknown[] = [];
 		try {
-			allTools = typeof (pi as any).getAllTools === "function" ? (pi as any).getAllTools() : [];
+			allTools =
+				typeof (pi as any).getAllTools === "function"
+					? (pi as any).getAllTools()
+					: [];
 		} catch {
 			allTools = [];
 		}
@@ -7958,23 +10371,48 @@ export default async function (pi: ExtensionAPI) {
 			const record = tool as Record<string, unknown>;
 			const name = typeof record.name === "string" ? record.name : "";
 			if (!name || wrappedMcpTools.has(name)) continue;
-			const execute = typeof record.execute === "function" ? (record.execute as any) : null;
+			const execute =
+				typeof record.execute === "function" ? (record.execute as any) : null;
 			if (!execute) continue;
-			const label = typeof record.label === "string" ? record.label : name === "mcp" ? "MCP" : `MCP ${name}`;
-			const description = typeof record.description === "string" ? record.description : "MCP tool";
+			const label =
+				typeof record.label === "string"
+					? record.label
+					: name === "mcp"
+						? "MCP"
+						: `MCP ${name}`;
+			const description =
+				typeof record.description === "string"
+					? record.description
+					: "MCP tool";
 			(pi as any).registerTool({
 				name,
 				label,
 				description,
 				parameters: record.parameters,
-				prepareArguments: typeof record.prepareArguments === "function" ? record.prepareArguments : undefined,
-				async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-					return await Promise.resolve(execute(toolCallId, params, signal, onUpdate, ctx));
+				prepareArguments:
+					typeof record.prepareArguments === "function"
+						? record.prepareArguments
+						: undefined,
+				async execute(
+					toolCallId: string,
+					params: any,
+					signal: AbortSignal | undefined,
+					onUpdate: any,
+					ctx: any,
+				) {
+					return await Promise.resolve(
+						execute(toolCallId, params, signal, onUpdate, ctx),
+					);
 				},
 				renderCall(args: any, theme: Theme, ctx: any) {
 					return renderGenericToolCall(name, args, theme, ctx);
 				},
-				renderResult(result: any, { expanded, isPartial }: any, theme: Theme, ctx: any) {
+				renderResult(
+					result: any,
+					{ expanded, isPartial }: any,
+					theme: Theme,
+					ctx: any,
+				) {
 					return renderMcpToolResult(result, expanded, isPartial, theme, ctx);
 				},
 			});
@@ -7994,13 +10432,25 @@ export default async function (pi: ExtensionAPI) {
 	// Streaming activity keeps the blink timer alive. Do NOT clear blink contexts
 	// on turn_end — a turn ends when the assistant message finishes, BEFORE its
 	// tools run. agent_end / agent_settled are the real "work finished" signals.
-	pi.on("turn_start", async () => { markBlinkActivity(); });
-	pi.on("message_start", async () => { markBlinkActivity(); });
-	pi.on("message_update", async () => { markBlinkActivity(); });
-	pi.on("tool_execution_start", async () => { markBlinkActivity(); });
+	pi.on("turn_start", async () => {
+		markBlinkActivity();
+	});
+	pi.on("message_start", async () => {
+		markBlinkActivity();
+	});
+	pi.on("message_update", async () => {
+		markBlinkActivity();
+	});
+	pi.on("tool_execution_start", async () => {
+		markBlinkActivity();
+	});
 	// Partial tool output is the main long-running signal (bash streams for minutes).
-	pi.on("tool_execution_update", async () => { markBlinkActivity(); });
-	pi.on("tool_execution_end", async () => { markBlinkActivity(); });
+	pi.on("tool_execution_update", async () => {
+		markBlinkActivity();
+	});
+	pi.on("tool_execution_end", async () => {
+		markBlinkActivity();
+	});
 	// agent_end fires when a low-level run finishes (tools for that assistant message
 	// are done). registerThinkingLabels clears currentAgentWorkStartMs on the same
 	// event; defer so we only wipe blink state once the work marker is gone.
