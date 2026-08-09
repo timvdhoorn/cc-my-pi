@@ -207,16 +207,28 @@ function compactStatus(
   key: string,
   fallbackLabel: string,
   theme: ExtensionContext["ui"]["theme"],
+  grayText?: (text: string) => string,
 ) {
   const raw = statuses.get(key)?.replace(ANSI_PATTERN, "").trim();
   if (!raw) return undefined;
 
   if (key === "caveman") {
     const level = raw.match(/caveman level:\s*(\S+)/i)?.[1];
-    return level ? `${theme.fg("dim", "caveman")} ${theme.fg("text", level)}` : undefined;
+    return level
+      ? `${grayText?.("caveman") ?? theme.fg("dim", "caveman")} ${theme.fg("text", level.toLowerCase())}`
+      : undefined;
   }
 
-  return theme.fg(key === "mcp" ? "accent" : "muted", raw || fallbackLabel);
+  if (key === "mcp") {
+    const details = raw
+      .replace(/^🔌?\s*MCP:\s*/u, "")
+      .replace(/\bservers?\b\s*/iu, "")
+      .trim();
+    const prefix = grayText?.("mcp") ?? theme.fg("muted", "mcp");
+    return details ? `${prefix} ${theme.fg("accent", details)}` : prefix;
+  }
+
+  return theme.fg("muted", raw || fallbackLabel);
 }
 
 function formatDirectory(cwd: string) {
@@ -376,12 +388,12 @@ export default function uiCustomization(
           const selectedStatuses = [
             compactStatus(statuses, "hindsight", "memory", theme),
             compactStatus(statuses, "codex-usage", "codex", theme),
-            compactStatus(statuses, "caveman", "caveman", theme),
+            compactStatus(statuses, "caveman", "caveman", theme, gray),
             (() => {
               const raw = statuses.get("bg-terminals")?.replace(ANSI_PATTERN, "").trim();
               return raw ? `${SKY}${raw}${RESET}` : undefined;
             })(),
-            compactStatus(statuses, "mcp", "MCP", theme),
+            compactStatus(statuses, "mcp", "MCP", theme, gray),
           ].filter((status): status is string => Boolean(status));
           const statusLine = selectedStatuses.join(gray(" | "));
 
