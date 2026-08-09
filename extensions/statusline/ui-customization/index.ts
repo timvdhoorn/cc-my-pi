@@ -219,6 +219,14 @@ function compactStatus(
       : undefined;
   }
 
+  if (key === "hindsight") {
+    const separatorIndex = raw.indexOf(":");
+    if (separatorIndex === -1) return grayText?.(raw) ?? theme.fg("muted", raw);
+    const statusPrefix = raw.slice(0, separatorIndex);
+    const prefix = grayText?.(statusPrefix) ?? theme.fg("muted", statusPrefix);
+    return `${prefix}${theme.fg("muted", raw.slice(separatorIndex))}`;
+  }
+
   if (key === "mcp") {
     const details = raw
       .replace(/^🔌?\s*MCP:\s*/u, "")
@@ -386,7 +394,7 @@ export default function uiCustomization(
 
           const statuses = footerData.getExtensionStatuses();
           const selectedStatuses = [
-            compactStatus(statuses, "hindsight", "memory", theme),
+            compactStatus(statuses, "hindsight", "memory", theme, gray),
             compactStatus(statuses, "codex-usage", "codex", theme),
             compactStatus(statuses, "caveman", "caveman", theme, gray),
             (() => {

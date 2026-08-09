@@ -7,7 +7,7 @@
 
 ### Changed
 
-- **Cleaner extension statuses** — MCP now renders as `mcp 18 enabled` without plug icon, colon, or `servers`; MCP and caveman labels use statusline gray, and caveman levels render lowercase.
+- **Cleaner extension statuses** — MCP now renders as `mcp 18 enabled` without plug icon, colon, or `servers`; MCP, memory, and caveman labels use statusline gray, while status values keep their existing colors and caveman levels render lowercase.
 
 ## [1.4.0] - 2026-08-07
 
