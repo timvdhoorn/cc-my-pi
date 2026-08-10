@@ -6,18 +6,16 @@ experience to [Pi](https://pi.dev), which works with any model.
 
 > Personal Pi UI bundle — Claude Code-inspired tool rendering, spinner, themes, and esc/queue steering. Fork of [pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`), heavily adapted. See [Credits & provenance](#credits--provenance).
 
-## What's new in v1.4.0
+## What's new in v1.4.1
 
-- Tool calls now look more like Claude Code out of the box: one clear row per
-  call, with its result directly underneath.
-- Results and pasted-image context now share the same aligned `⎿` arm instead
-  of mixed tree connectors.
-- Running tools stay visually stable; flashing live-output previews are now
-  optional.
-- Task tracking is built in, and first-time setup can install recommended
-  companion extensions for you.
-- Context usage in the statusline stays accurate during long sessions and
-  model changes.
+- File edits now line up with every other tool row: same left column, same
+  `⎿` arm as bash, read, and MCP calls.
+- An edit's change summary (`+1 -1 at line 10`) is shown once instead of
+  repeating below the diff.
+- The statusline reads calmer: MCP shows as `mcp 18 enabled`, and the memory,
+  MCP, and caveman labels use the same muted gray while their values keep
+  their colors.
+- Upgrade impact: visual only — no settings or commands changed.
 
 Every module below is **optional and individually toggleable** — turn any of
 them off in settings and the rest keeps working. Core tool rendering (the

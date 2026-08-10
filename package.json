@@ -1,6 +1,6 @@
 {
   "name": "cc-my-pi",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "cc-my-pi — Claude Code-style UI for Pi: grouped tool rows, Shiki diffs, spinner, themes, esc/queue steering, and a /cc-my-pi settings panel. Personal fork of FammasMaz/pi-cc-tools.",
   "keywords": [
     "pi-package",
