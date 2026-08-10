@@ -10,7 +10,6 @@ import {
 	formatClaudeToolActivities,
 	formatClaudeToolCallLabel,
 	HIDDEN_TASK_TOOL_NAMES,
-	outdentClaudeResultBlock,
 	resolveLiveToolPreviewEnabled,
 	resolveToolGroupingEnabled,
 } from "./task-and-tool-presentation.ts";
@@ -134,13 +133,6 @@ test("tool results use one Claude arm and aligned continuation rows", () => {
 		"  ⎿  Read 120 lines",
 		"     second row",
 	]);
-});
-
-test("Edit result blocks sit one column left of other tool results", () => {
-	assert.deepEqual(
-		outdentClaudeResultBlock(["  ⎿  +1 at line 1", "     diff row"]),
-		[" ⎿  +1 at line 1", "    diff row"],
-	);
 });
 
 test("individual tool call labels use Claude Code parentheses", () => {

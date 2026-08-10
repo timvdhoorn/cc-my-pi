@@ -79,7 +79,6 @@ import {
 	formatClaudeToolActivities,
 	formatClaudeToolCallLabel,
 	HIDDEN_TASK_TOOL_NAMES,
-	outdentClaudeResultBlock,
 	resolveLiveToolPreviewEnabled,
 	resolveToolGroupingEnabled,
 } from "./task-and-tool-presentation.js";
@@ -4267,8 +4266,13 @@ function withFinalBranchBlock(
 	return withBranch(content, theme, isError);
 }
 
+/**
+ * Edit/diff blocks used to lose one outer column so their gutter lined up, but
+ * that pushed their ⎿ arm one column left of every other tool's arm. Keep the
+ * arm column identical everywhere; the diff gutter absorbs the extra column.
+ */
 function indentBranchBlock(block: string): string {
-	return outdentClaudeResultBlock(block.split("\n")).join("\n");
+	return block;
 }
 
 // ---------------------------------------------------------------------------
@@ -6771,6 +6775,22 @@ async function computeLocalizedEditDiffs(
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * The edit call preview already prints its own summary line ("+1 -1 at line 10",
+ * "2 edits +9 -1") above the diff. Emitting the identical line again from
+ * renderResult duplicated it one arm lower, so drop the result line when the
+ * preview body already leads with the same text.
+ */
+function previewBodyLeadsWith(ctx: any, summaryLine: string): boolean {
+	const body = ctx?.state?._ptBody;
+	if (typeof body !== "string" || !body.trim()) return false;
+	const first = stripAnsi(body.split("\n")[0]).trim();
+	const candidate = stripAnsi(summaryLine).trim();
+	// Multi-edit results append "(N diff lines)" to the same head, so a prefix
+	// match counts as a duplicate too — the diff itself already shows the size.
+	return first.length > 0 && candidate.startsWith(first);
 }
 
 function renderEditPreviewBody(
@@ -10052,6 +10072,10 @@ export default async function (pi: ExtensionAPI) {
 		label: "edit",
 		description: editTool.description,
 		parameters: editTool.parameters,
+		// Pi's built-in edit definition sets renderShell "self", which skips the
+		// Box(1,1) padding every other tool block gets, so the whole edit block sat
+		// one column left of bash/read/etc. Opt back into the default shell.
+		renderShell: "default",
 		async execute(toolCallId, params, signal, onUpdate, _ctx) {
 			const fp = params.path ?? (params as any).file_path ?? "";
 			const operations = getEditOperations(params);
@@ -10218,9 +10242,12 @@ export default async function (pi: ExtensionAPI) {
 					hunks ?? 0,
 					"",
 				);
+				const line = `${summary}${loc}`;
+				if (previewBodyLeadsWith(ctx, line))
+					return makeText(ctx.lastComponent, "");
 				return makeText(
 					ctx.lastComponent,
-					indentBranchBlock(withBranch(`${summary}${loc}`, theme)),
+					indentBranchBlock(withBranch(line, theme)),
 				);
 			}
 			if ((result as any).details?._type === "multiEditInfo") {
@@ -10233,14 +10260,12 @@ export default async function (pi: ExtensionAPI) {
 					hunks ?? 0,
 					"",
 				);
+				const line = `${editCount} edits ${summary}${typeof diffLineCount === "number" ? ` ${theme.fg("muted", `(${diffLineCount} diff lines)`)}` : ""}`;
+				if (previewBodyLeadsWith(ctx, line))
+					return makeText(ctx.lastComponent, "");
 				return makeText(
 					ctx.lastComponent,
-					indentBranchBlock(
-						withBranch(
-							`${editCount} edits ${summary}${typeof diffLineCount === "number" ? ` ${theme.fg("muted", `(${diffLineCount} diff lines)`)}` : ""}`,
-							theme,
-						),
-					),
+					indentBranchBlock(withBranch(line, theme)),
 				);
 			}
 			return makeText(

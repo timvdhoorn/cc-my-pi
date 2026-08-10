@@ -21,11 +21,6 @@ export function formatClaudeResultBlock(lines: string[]): string[] {
 	);
 }
 
-/** Edit previews have their own diff gutter, so remove one outer column. */
-export function outdentClaudeResultBlock(lines: string[]): string[] {
-	return lines.map((line) => (line.startsWith(" ") ? line.slice(1) : line));
-}
-
 /** Claude Code renders tool-specific summaries directly after the bold name. */
 export function formatClaudeToolCallLabel(
 	toolLabel: string,

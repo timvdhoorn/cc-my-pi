@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Consistent tool result arms** — edit and diff results no longer sit one column left of every other tool's `⎿` arm (pi's built-in `edit` definition uses `renderShell: "self"`, which skips the one-column tool box padding — the override now forces the default shell), and the summary line (`+1 -1 at line 10`, `2 edits +9 -1`) is printed once instead of repeating under the diff.
+
 ### Changed
 
 - **Cleaner extension statuses** — MCP now renders as `mcp 18 enabled` without plug icon, colon, or `servers`; MCP, memory, and caveman labels use statusline gray, while status values keep their existing colors and caveman levels render lowercase.
