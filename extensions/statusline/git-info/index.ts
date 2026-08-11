@@ -88,7 +88,11 @@ export default function gitInfo(pi: ExtensionAPI) {
   let state = emptyGitInfoState();
   let runtime: GitInfoRuntime | undefined;
   let pollingFiber: Fiber.Fiber<void> | undefined;
-  let currentContext: ExtensionContext | undefined;
+  // Background work must never dereference a captured ExtensionContext: pi
+  // invalidates it after session replacement/reload, and embedded sessions
+  // (e.g. subagents) dispose without session_shutdown. Store the resolved cwd
+  // string plus the ctx used only as a staleness probe.
+  let currentSession: { ctx: ExtensionContext; cwd: string } | undefined;
   let generation = 0;
   let queriedPrBranch: string | null = null;
   const refreshCoordinator = makeRefreshCoordinator();
@@ -98,16 +102,40 @@ export default function gitInfo(pi: ExtensionAPI) {
   const run = (
     command: string,
     args: string[],
-    ctx: ExtensionContext,
+    cwd: string,
     timeout: number,
-  ) => runCommand(command, args, ctx.cwd, timeout);
+  ) => runCommand(command, args, cwd, timeout);
 
-  const lookupPullRequest = (ctx: ExtensionContext, branch: string) =>
+  const readCwd = (ctx: ExtensionContext): string | undefined => {
+    try {
+      return ctx.cwd;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const isContextStale = (ctx: ExtensionContext): boolean => {
+    try {
+      void ctx.mode;
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  const captureSession = (ctx: ExtensionContext): string | undefined => {
+    const cwd = readCwd(ctx);
+    if (cwd === undefined) return undefined;
+    currentSession = { ctx, cwd };
+    return cwd;
+  };
+
+  const lookupPullRequest = (cwd: string, branch: string) =>
     Effect.gen(function* () {
       const result = yield* run(
         "gh",
         ["pr", "view", branch, "--json", "number,url,state,isDraft"],
-        ctx,
+        cwd,
         GH_TIMEOUT_MS,
       );
       if (result.code !== 0) return null;
@@ -115,19 +143,18 @@ export default function gitInfo(pi: ExtensionAPI) {
     });
 
   const refreshEffect = (
-    ctx: ExtensionContext,
+    cwd: string,
     forcePullRequest: boolean,
     refreshGeneration: number,
   ) =>
     Effect.suspend(() => {
       if (refreshGeneration !== generation) return Effect.void;
-      currentContext = ctx;
 
       return Effect.gen(function* () {
         const repo = yield* run(
           "git",
           ["rev-parse", "--is-inside-work-tree"],
-          ctx,
+          cwd,
           GIT_TIMEOUT_MS,
         );
         if (refreshGeneration !== generation) return;
@@ -149,15 +176,15 @@ export default function gitInfo(pi: ExtensionAPI) {
           shortstatResult,
         ] = yield* Effect.all(
           [
-            run("git", ["branch", "--show-current"], ctx, GIT_TIMEOUT_MS),
-            run("git", ["rev-parse", "--short", "HEAD"], ctx, GIT_TIMEOUT_MS),
+            run("git", ["branch", "--show-current"], cwd, GIT_TIMEOUT_MS),
+            run("git", ["rev-parse", "--short", "HEAD"], cwd, GIT_TIMEOUT_MS),
             run(
               "git",
               ["status", "--porcelain=v1", "--untracked-files=all"],
-              ctx,
+              cwd,
               GIT_TIMEOUT_MS,
             ),
-            run("git", ["rev-parse", "--git-dir"], ctx, GIT_TIMEOUT_MS),
+            run("git", ["rev-parse", "--git-dir"], cwd, GIT_TIMEOUT_MS),
             run(
               "git",
               [
@@ -166,11 +193,11 @@ export default function gitInfo(pi: ExtensionAPI) {
                 "--count",
                 "@{upstream}...HEAD",
               ],
-              ctx,
+              cwd,
               GIT_TIMEOUT_MS,
             ),
-            run("git", ["log", "-1", "--format=%ct"], ctx, GIT_TIMEOUT_MS),
-            run("git", ["diff", "--shortstat", "HEAD"], ctx, GIT_TIMEOUT_MS),
+            run("git", ["log", "-1", "--format=%ct"], cwd, GIT_TIMEOUT_MS),
+            run("git", ["diff", "--shortstat", "HEAD"], cwd, GIT_TIMEOUT_MS),
           ],
           { concurrency: "unbounded" },
         );
@@ -226,7 +253,7 @@ export default function gitInfo(pi: ExtensionAPI) {
 
         if (forcePullRequest || branchChanged) {
           queriedPrBranch = branchName;
-          const pullRequest = yield* lookupPullRequest(ctx, branchName);
+          const pullRequest = yield* lookupPullRequest(cwd, branchName);
           if (refreshGeneration !== generation) return;
           state = { ...state, pullRequest };
           publish();
@@ -234,21 +261,37 @@ export default function gitInfo(pi: ExtensionAPI) {
       });
     });
 
-  const refresh = (ctx: ExtensionContext, forcePullRequest = false) =>
-    refreshCoordinator.run(refreshEffect(ctx, forcePullRequest, generation));
+  const refresh = (cwd: string, forcePullRequest = false) =>
+    refreshCoordinator.run(refreshEffect(cwd, forcePullRequest, generation));
 
-  const refreshIfIdle = (ctx: ExtensionContext) =>
-    refreshCoordinator.runIfIdle(refreshEffect(ctx, false, generation));
+  const refreshIfIdle = (cwd: string) =>
+    refreshCoordinator.runIfIdle(refreshEffect(cwd, false, generation));
 
   const reportBackgroundDefect = (defect: unknown) =>
     Effect.logError("git-info background task defect", defect);
 
+  // Sentinel failure: ends the polling loop quietly when the session died
+  // without session_shutdown (e.g. an SDK session disposed directly).
+  const STALE_SESSION = "git-info/stale-session" as const;
+
   const poll = () =>
-    Effect.suspend(() =>
-      currentContext ? refreshIfIdle(currentContext) : Effect.void,
-    ).pipe(
+    Effect.suspend((): Effect.Effect<
+      void,
+      typeof STALE_SESSION,
+      CommandRunner
+    > => {
+      const session = currentSession;
+      if (!session) return Effect.void;
+      if (isContextStale(session.ctx)) {
+        currentSession = undefined;
+        pollingFiber = undefined;
+        return Effect.fail(STALE_SESSION);
+      }
+      return refreshIfIdle(session.cwd);
+    }).pipe(
       Effect.catchDefect(reportBackgroundDefect),
       Effect.repeat(Schedule.fixed(POLL_INTERVAL_MS)),
+      Effect.catchEager(() => Effect.void),
       Effect.delay(POLL_INTERVAL_MS),
       Effect.asVoid,
     );
@@ -258,17 +301,20 @@ export default function gitInfo(pi: ExtensionAPI) {
       effect.pipe(Effect.catchDefect(reportBackgroundDefect)),
     );
 
-  const refreshInBackground = (ctx: ExtensionContext) => {
-    forkBackground(refreshIfIdle(ctx));
+  const refreshInBackground = (cwd: string) => {
+    forkBackground(refreshIfIdle(cwd));
   };
 
   pi.events.on(REFRESH_CHANNEL, () => {
-    if (currentContext) refreshInBackground(currentContext);
+    const session = currentSession;
+    if (!session || isContextStale(session.ctx)) return;
+    refreshInBackground(session.cwd);
   });
 
   pi.on("session_start", async (_event, ctx) => {
     generation += 1;
     queriedPrBranch = null;
+    captureSession(ctx);
 
     const previousPollingFiber = pollingFiber;
     pollingFiber = undefined;
@@ -276,22 +322,26 @@ export default function gitInfo(pi: ExtensionAPI) {
       await getRuntime().runPromise(Fiber.interrupt(previousPollingFiber));
     }
 
-    await runEffect(getRuntime(), refresh(ctx));
+    const session = currentSession;
+    if (!session) return;
+    await runEffect(getRuntime(), refresh(session.cwd));
     pollingFiber = forkBackground(poll());
   });
 
   pi.on("input", (_event, ctx) => {
-    refreshInBackground(ctx);
+    const cwd = captureSession(ctx);
+    if (cwd !== undefined) refreshInBackground(cwd);
     return { action: "continue" };
   });
 
   pi.on("tool_execution_end", (_event, ctx) => {
-    refreshInBackground(ctx);
+    const cwd = captureSession(ctx);
+    if (cwd !== undefined) refreshInBackground(cwd);
   });
 
   pi.on("session_shutdown", async () => {
     generation += 1;
-    currentContext = undefined;
+    currentSession = undefined;
     pollingFiber = undefined;
     const closing = runtime;
     runtime = undefined;
@@ -329,7 +379,7 @@ export default function gitInfo(pi: ExtensionAPI) {
   pi.registerCommand("pr", {
     description: "Refresh git and pull request information",
     handler: async (_args, ctx) => {
-      await runEffect(getRuntime(), refresh(ctx, true), {
+      await runEffect(getRuntime(), refresh(ctx.cwd, true), {
         signal: ctx.signal,
         interruptMessage: "Git and pull request refresh was cancelled.",
       });
