@@ -145,8 +145,69 @@ test("replacement extension invalidates pending editor installs from stale conte
 			for (const timer of staleTimers) timer.callback();
 		});
 		assert.equal(staleTimers.every((timer) => timer.cleared), false);
-		assert.deepEqual([...oldHandlers.keys()], ["session_start", "agent_start"]);
-		assert.deepEqual([...replacementHandlers.keys()], ["session_start", "agent_start"]);
+		const lifecycleEvents = [
+			"session_start",
+			"agent_start",
+			"session_before_switch",
+			"session_before_fork",
+			"session_before_tree",
+			"session_shutdown",
+		];
+		assert.deepEqual([...oldHandlers.keys()], lifecycleEvents);
+		assert.deepEqual([...replacementHandlers.keys()], lifecycleEvents);
+	} finally {
+		globalThis.setTimeout = originalSetTimeout;
+		globalThis.clearTimeout = originalClearTimeout;
+		globalThis.queueMicrotask = originalQueueMicrotask;
+	}
+});
+
+test("delayed shift-enter install ignores a ctx invalidated by Pi's own reload", () => {
+	const originalSetTimeout = globalThis.setTimeout;
+	const originalClearTimeout = globalThis.clearTimeout;
+	const originalQueueMicrotask = globalThis.queueMicrotask;
+	const scheduledTimers: Array<{ callback: () => void; cleared: boolean }> = [];
+	const scheduledMicrotasks: Array<() => void> = [];
+	const handlers = new Map<string, (event: any, ctx: any) => unknown>();
+	globalThis.setTimeout = ((callback: () => void) => {
+		const timer = { callback, cleared: false };
+		scheduledTimers.push(timer);
+		return timer as any;
+	}) as typeof setTimeout;
+	globalThis.clearTimeout = ((timer: any) => {
+		timer.cleared = true;
+	}) as typeof clearTimeout;
+	globalThis.queueMicrotask = ((callback: () => void) => {
+		scheduledMicrotasks.push(callback);
+	}) as typeof queueMicrotask;
+
+	try {
+		registerShiftEnterNewlineWrapper({
+			on: (name: string, handler: (event: any, ctx: any) => unknown) => handlers.set(name, handler),
+		} as unknown as ExtensionAPI);
+		let stale = false;
+		const ctx = {
+			get mode() {
+				if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+				return "tui";
+			},
+			ui: { getEditorComponent: () => undefined, setEditorComponent: () => {} },
+		};
+		handlers.get("session_start")?.({}, ctx);
+		// Reload invalidates ctx without a new installLate call on this instance.
+		stale = true;
+		assert.doesNotThrow(() => {
+			for (const callback of scheduledMicrotasks) callback();
+			for (const timer of scheduledTimers) timer.callback();
+		});
+
+		const before = scheduledTimers.length;
+		stale = false;
+		handlers.get("agent_start")?.({}, ctx);
+		const pending = scheduledTimers.slice(before);
+		assert.ok(pending.length > 0);
+		handlers.get("session_before_switch")?.({}, ctx);
+		assert.ok(pending.every((timer) => timer.cleared));
 	} finally {
 		globalThis.setTimeout = originalSetTimeout;
 		globalThis.clearTimeout = originalClearTimeout;

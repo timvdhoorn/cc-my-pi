@@ -3073,6 +3073,17 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 		ctx.ui.setEditorComponent(factory);
 	};
 
+	// Deferred retries run outside any handler, so a throw would be uncaught and
+	// kill the process. Pi's own reload/switch/fork invalidates the captured ctx
+	// without a new installLate call; an abandoned install must fail silently.
+	const installDeferred = (ctx: any): void => {
+		try {
+			install(ctx);
+		} catch {
+			/* stale ctx after session lifecycle change */
+		}
+	};
+
 	const installLate = (ctx: any): void => {
 		// Aggressive re-assert outermost after paster/queue-steer compose. A newer
 		// lifecycle callback invalidates every closure that captured its old ctx.
@@ -3084,7 +3095,7 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 						generation === installGeneration &&
 						isCurrentShiftEnterInstallGeneration(generation)
 					)
-						install(ctx);
+						installDeferred(ctx);
 				});
 				continue;
 			}
@@ -3094,7 +3105,7 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 					generation === installGeneration &&
 					isCurrentShiftEnterInstallGeneration(generation)
 				)
-					install(ctx);
+					installDeferred(ctx);
 			}, ms);
 			installTimers.add(timer);
 		}
@@ -3103,6 +3114,19 @@ export function registerShiftEnterNewlineWrapper(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (_event, ctx) => installLate(ctx));
 	pi.on("agent_start", (_event, ctx) => installLate(ctx));
+	// These fire before Pi invalidates the current ctx.
+	pi.on("session_before_switch", () => {
+		cancelPendingInstalls();
+	});
+	pi.on("session_before_fork", () => {
+		cancelPendingInstalls();
+	});
+	pi.on("session_before_tree", () => {
+		cancelPendingInstalls();
+	});
+	pi.on("session_shutdown", () => {
+		cancelPendingInstalls();
+	});
 }
 
 /** Claude-style skill invocation card: Skill(name) instead of bold [skill] + expand hint. */
@@ -3499,7 +3523,13 @@ function registerPromptGlyphWrapper(pi: ExtensionAPI): void {
 		install(ctx);
 		// Re-install after other extensions (pi-paster replaces the factory
 		// outright; queue-steer/esc-steer wrap late) so we stay in the chain.
-		setTimeout(() => install(ctx), 0);
+		setTimeout(() => {
+			try {
+				install(ctx);
+			} catch {
+				/* stale ctx after session lifecycle change */
+			}
+		}, 0);
 	};
 	pi.on("session_start", (_event, ctx) => installLate(ctx));
 	pi.on("agent_start", (_event, ctx) => installLate(ctx));

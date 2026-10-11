@@ -73,12 +73,12 @@
   },
   "dependencies": {
     "@effect/platform-node": "4.0.0-beta.98",
+    "@effect/platform-node-shared": "4.0.0-beta.98",
     "@shikijs/cli": "^4.0.2",
     "diff": "^9.0.0",
     "effect": "4.0.0-beta.98",
     "pi-paster": "^0.2.3",
-    "shiki": "^4.4.1",
-    "typebox": "^1.1.34"
+    "shiki": "^4.4.1"
   },
   "overrides": {
     "brace-expansion": "5.0.9",
@@ -95,7 +95,7 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
-    "@sinclair/typebox": "*"
+    "typebox": "*"
   },
   "pi": {
     "extensions": [
@@ -110,8 +110,8 @@
     "@earendil-works/pi-ai": "^0.84.0",
     "@earendil-works/pi-coding-agent": "^0.84.0",
     "@earendil-works/pi-tui": "^0.84.0",
-    "@sinclair/typebox": "^0.34.49",
     "@types/node": "^25.7.0",
+    "typebox": "^1.1.34",
     "typescript": "^6.0.3"
   },
   "contributors": [
