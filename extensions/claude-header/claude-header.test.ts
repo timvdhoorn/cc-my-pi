@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { beforeEach } from "node:test";
+import test, { beforeEach, type TestContext } from "node:test";
 import { registerClaudeHeader } from "./index.ts";
 import { headerColumnWidths, padRight } from "./render-utils.ts";
 import { collectLoadedStats, resetLoadedStatsCache } from "./loaded-stats.ts";
@@ -198,6 +198,149 @@ test("/context hint appears only when a context command exists", async () => {
 		);
 		component.dispose();
 	}
+});
+
+/** Test-local timer controls keep abandoned callbacks available after cancellation. */
+function deferredClock(t: TestContext) {
+	const timers: Array<{ callback: () => void; cleared: boolean; unref(): void }> = [];
+	t.mock.method(globalThis, "setTimeout", (callback: () => void) => {
+		const timer = { callback, cleared: false, unref() {} };
+		timers.push(timer);
+		return timer;
+	});
+	t.mock.method(globalThis, "clearTimeout", (timer: (typeof timers)[number]) => {
+		timer.cleared = true;
+	});
+	return timers;
+}
+
+function staleableCtx() {
+	const result = makeCtx();
+	let stale = false;
+	let modeReads = 0;
+	Object.defineProperty(result.ctx, "mode", {
+		get() {
+			modeReads++;
+			if (stale) throw new Error("This extension ctx is stale after session replacement or reload.");
+			return "tui";
+		},
+	});
+	return { ...result, invalidate: () => { stale = true; }, reads: () => modeReads };
+}
+
+for (const reason of ["quit", "new", "resume", "fork", "reload"]) {
+	test(`shutdown (${reason}) cancels installation before touching an invalidated ctx`, (t) => {
+		const timers = deferredClock(t);
+		const { pi, handlers } = makePi();
+		let hooks = 0;
+		registerClaudeHeader(pi, true, { onTui: () => { hooks++; } });
+		const old = staleableCtx();
+		handlers.get("session_start")!({}, old.ctx);
+		assert.equal(timers.length, 1);
+		handlers.get("session_shutdown")!({ reason }, old.ctx);
+		handlers.get("session_shutdown")!({ reason }, old.ctx);
+		old.invalidate();
+		const readsBefore = old.reads();
+		assert.equal(timers[0].cleared, true);
+		assert.doesNotThrow(() => timers[0].callback());
+		assert.equal(old.reads(), readsBefore, "abandoned callback never probes stale context");
+		assert.equal(old.setHeaderFactories.length, 0);
+		assert.equal(hooks, 0);
+	});
+}
+
+for (const shutdown of [false, true]) {
+	test(`new start supersedes pending work (shutdown=${shutdown})`, (t) => {
+		const timers = deferredClock(t);
+		const { pi, handlers } = makePi();
+		registerClaudeHeader(pi, true);
+		const old = staleableCtx();
+		const fresh = makeCtx();
+		handlers.get("session_start")!({}, old.ctx);
+		if (shutdown) handlers.get("session_shutdown")!({ reason: "new" }, old.ctx);
+		handlers.get("session_start")!({}, fresh.ctx);
+		old.invalidate();
+		assert.equal(timers[0].cleared, true);
+		assert.doesNotThrow(() => timers[0].callback());
+		timers[1].callback();
+		assert.equal(old.setHeaderFactories.length, 0);
+		assert.equal(fresh.setHeaderFactories.length, 1);
+	});
+}
+
+test("reload isolates old and new registrations, without cancelling unrelated timers", (t) => {
+	const timers = deferredClock(t);
+	const oldPi = makePi();
+	const newPi = makePi();
+	registerClaudeHeader(oldPi.pi, true);
+	const old = staleableCtx();
+	oldPi.handlers.get("session_start")!({}, old.ctx);
+	let unrelatedRan = false;
+	setTimeout(() => { unrelatedRan = true; }, 0);
+	oldPi.handlers.get("session_shutdown")!({ reason: "reload" }, old.ctx);
+	old.invalidate();
+	registerClaudeHeader(newPi.pi, true);
+	const fresh = makeCtx();
+	newPi.handlers.get("session_start")!({}, fresh.ctx);
+	assert.deepEqual(timers.map((timer) => timer.cleared), [true, false, false]);
+	for (const timer of timers) timer.callback();
+	assert.equal(unrelatedRan, true);
+	assert.equal(old.setHeaderFactories.length, 0);
+	assert.equal(fresh.setHeaderFactories.length, 1);
+});
+
+test("healthy TUI installs after synchronous startup handlers and preserves onTui", (t) => {
+	const timers = deferredClock(t);
+	const { pi, handlers } = makePi();
+	const order: string[] = [];
+	const tui = { requestRender() {} };
+	registerClaudeHeader(pi, true, { onTui: (actual) => {
+		assert.equal(actual, tui);
+		order.push("hook");
+	} });
+	const { ctx, setHeaderFactories } = makeCtx();
+	handlers.get("session_start")!({}, ctx);
+	order.push("later startup handler");
+	assert.equal(setHeaderFactories.length, 0);
+	timers[0].callback();
+	order.push("header installed");
+	const component = setHeaderFactories[0](tui);
+	assert.deepEqual(order, ["later startup handler", "header installed", "hook"]);
+	handlers.get("session_shutdown")!({ reason: "quit" }, ctx);
+	component.dispose();
+});
+
+for (const mode of ["print", "json", "rpc"]) {
+	test(`healthy ${mode} startup schedules no header work`, (t) => {
+		const timers = deferredClock(t);
+		const { pi, handlers } = makePi();
+		registerClaudeHeader(pi, true, { onTui() { assert.fail("non-TUI hook"); } });
+		const { ctx, setHeaderFactories } = makeCtx();
+		ctx.mode = mode;
+		handlers.get("session_start")!({}, ctx);
+		handlers.get("session_shutdown")!({ reason: "quit" }, ctx);
+		assert.equal(timers.length, 0);
+		assert.equal(setHeaderFactories.length, 0);
+	});
+}
+
+test("unexpected live mode, setHeader and hook failures remain visible", (t) => {
+	const timers = deferredClock(t);
+	const { pi, handlers } = makePi();
+	const failure = new Error("unexpected live failure");
+	registerClaudeHeader(pi, true, { onTui() { throw failure; } });
+	const brokenMode = makeCtx();
+	Object.defineProperty(brokenMode.ctx, "mode", { get() { throw failure; } });
+	assert.throws(() => handlers.get("session_start")!({}, brokenMode.ctx), (error) => error === failure);
+	const brokenUi = makeCtx();
+	brokenUi.ctx.ui.setHeader = () => { throw failure; };
+	handlers.get("session_start")!({}, brokenUi.ctx);
+	assert.throws(() => timers[0].callback(), (error) => error === failure);
+	const brokenHook = makeCtx();
+	handlers.get("session_start")!({}, brokenHook.ctx);
+	timers[1].callback();
+	assert.throws(() => brokenHook.setHeaderFactories[0]({ requestRender() {} }), (error) => error === failure);
+	handlers.get("session_shutdown")!({ reason: "quit" }, brokenHook.ctx);
 });
 
 test("headerColumnWidths flips to Claude proportions (narrow left, wider right)", () => {
