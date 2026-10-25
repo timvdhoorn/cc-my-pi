@@ -6,8 +6,10 @@ experience to [Pi](https://pi.dev), which works with any model.
 
 > Personal Pi UI bundle — Claude Code-inspired tool rendering, spinner, themes, and esc/queue steering. Fork of [pi-cc-tools](https://github.com/FammasMaz/pi-cc-tools) (npm `pi-claude-code-ui`), heavily adapted. See [Credits & provenance](#credits--provenance).
 
-## What's new in v1.4.2
+## What's new in v1.4.3
 
+- The startup header no longer crashes Pi after shutdown: print/JSON runs exit
+  cleanly, and reloading or switching sessions cancels pending header work.
 - `pi install npm:cc-my-pi` works again: no more `Cannot find module 'ioredis'`
   or `effect/Deferred` errors at startup.
 - Delayed ShiftEnter/editor installation survives reloading, forking or

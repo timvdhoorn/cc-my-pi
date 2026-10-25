@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-10-25
+
+### Fixed
+
+- **No crash at exit in print/JSON mode** — the startup header no longer leaves a pending timer that reads an invalidated session after shutdown, so promptless `pi --print --mode json` exits 0 again. Pending header installation is cancelled on shutdown, reload or a new session, and print/JSON/RPC modes schedule no header work at all ([#11](https://github.com/timvdhoorn/cc-my-pi/issues/11), [#12](https://github.com/timvdhoorn/cc-my-pi/pull/12), thanks @NoGood).
+
 ## [1.4.2] - 2026-10-11
 
 ### Fixed
