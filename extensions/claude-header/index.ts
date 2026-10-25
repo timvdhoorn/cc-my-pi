@@ -214,12 +214,36 @@ function applyPiLook(pi: ExtensionAPI, ctx: ExtensionContext, hooks?: HeaderHook
 export function registerClaudeHeader(pi: ExtensionAPI, enabled: boolean, hooks?: HeaderHooks): void {
 	if (!enabled) return;
 
+	let pendingInstall: { timer?: ReturnType<typeof setTimeout> } | undefined;
+
+	function cancelPendingInstall(): void {
+		const abandoned = pendingInstall;
+		pendingInstall = undefined;
+		if (abandoned?.timer) clearTimeout(abandoned.timer);
+	}
+
 	pi.on("session_start", (_event, ctx) => {
-		const applyAfterOtherStartupHandlers = setTimeout(() => applyPiLook(pi, ctx, hooks), 0);
-		applyAfterOtherStartupHandlers.unref?.();
+		cancelPendingInstall();
+		// Check while this lifecycle context is live. Print/JSON/RPC must not
+		// schedule terminal UI work that can outlive promptless teardown.
+		if (ctx.mode !== "tui") return;
+
+		const install: NonNullable<typeof pendingInstall> = {};
+		pendingInstall = install;
+		install.timer = setTimeout(() => {
+			// Cancellation also invalidates ownership: even an already queued
+			// callback must not touch the old ctx, pi or statusline hooks.
+			if (pendingInstall !== install) return;
+			pendingInstall = undefined;
+			applyPiLook(pi, ctx, hooks);
+		}, 0);
+		install.timer.unref?.();
 	});
 
+	// Pi emits shutdown before context invalidation on quit, replacement and
+	// reload. Cancel owned work first; unref alone is not cancellation.
 	pi.on("session_shutdown", () => {
+		cancelPendingInstall();
 		disposeActiveHeader();
 	});
 }

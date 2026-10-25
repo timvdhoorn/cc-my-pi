@@ -10,7 +10,8 @@ experience to [Pi](https://pi.dev), which works with any model.
 
 - `pi install npm:cc-my-pi` works again: no more `Cannot find module 'ioredis'`
   or `effect/Deferred` errors at startup.
-- Reloading, forking or switching sessions can no longer crash Pi.
+- Delayed ShiftEnter/editor installation survives reloading, forking or
+  switching sessions (PR #10).
 - The git statusline stops quietly after a subagent finishes instead of
   logging errors every few seconds.
 - Thinking follows Pi's own `Ctrl+T` setting: when it is visible it stays
@@ -152,6 +153,14 @@ Disables the Claude-style spinner; Pi's stock spinner takes over after `/reload`
 Falls back to the one-line `✻ Welcome to Pi` header after `/reload` (the animated
 boxed header is off). Don't install `npm:pi-claude-code-tui` alongside cc-my-pi —
 its header is already vendored here, and running both would draw two headers.
+
+The startup header installs on the next timer turn, after synchronous startup
+handlers, and keeps the statusline's TUI hook. Pending installation belongs to
+that session: shutdown (including replacement or reload) cancels it, and a new
+start supersedes any earlier pending installation. Abandoned callbacks do not
+access the old context. Print, JSON and RPC modes schedule no terminal header
+work. Unexpected errors in a live installation or hook are not suppressed.
+This header lifecycle fix is separate from PR #10's delayed ShiftEnter fix.
 
 ```json
 { "sessionCommandsEnabled": false }
